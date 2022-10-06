@@ -2,10 +2,10 @@
 #include <iostream>
 #include "unistd.h"
 
-std::string bytearray2hex(const unsigned char byte_arr[], int arr_len)
+std::string bytearray2hex(const unsigned char byte_arr[], int arr_len, int offset = 0)
 {
     std::string hexstr = "";
-    for (int i = 0; i < arr_len; i++)
+    for (int i = offset; i < arr_len; i++)
     {
         char hex1;
         char hex2;
@@ -89,6 +89,7 @@ enum Log_event_type {
     ENUM_END_EVENT /* end marker */
 
 };
+
 // ref : https://github.com/mixigroup/mixi-pgw/blob/main/binlog/main.cc
 int main()
 {
@@ -106,7 +107,7 @@ int main()
         exit(1);
     }
 
-    if (mysql_query(con, "SET @source_binlog_checksum='ALL'"))
+    if (mysql_query(con, "SET @master_binlog_checksum='NONE', @source_binlog_checksum = 'NONE'"))
     {
         fprintf(stderr, "mysql_query() failed\n");
         fprintf(stderr, "Error %u: %s\n", mysql_errno(con), mysql_error(con));
@@ -116,74 +117,80 @@ int main()
     //    std::string file_name = "mysql-bin.000004";
 
     MYSQL_RPL rpl = {0, nullptr, 4, 1, MYSQL_RPL_SKIP_HEARTBEAT, 0, NULL, NULL, 0, NULL};
-
-    if (mysql_binlog_open(con, &rpl))
-    {
-        fprintf(stderr, "mysql_binlog_open() failed\n");
-        fprintf(stderr, "Error %u: %s\n", mysql_errno(con), mysql_error(con));
-        exit(1);
-    }
+    std::string next_log;
     for (;;) /* read events until error or EOF */
     {
-        if (mysql_binlog_fetch(con, &rpl))
+        if (mysql_binlog_open(con, &rpl))
         {
-            fprintf(stderr, "mysql_binlog_fetch() failed\n");
+            fprintf(stderr, "mysql_binlog_open() failed\n");
             fprintf(stderr, "Error %u: %s\n", mysql_errno(con), mysql_error(con));
-            sleep(2);
-            break;
+            exit(1);
         }
-        if (rpl.size == 0) /* EOF */
-        {
-            fprintf(stderr, "EOF event received\n");
-            sleep(2);
-            break;
-        }
-        fprintf(stderr, "Event received of size %lu.\n", rpl.size);
 
-        Log_event_type type = (Log_event_type)rpl.buffer[1 + 4];
-        const char* ev = (const char*)(rpl.buffer + 1);
-
-        // processing by event type
-        switch (type)
+        for (;;)
         {
-            case ROTATE_EVENT:
-                printf("ROTATE_EVENT\n");
+            if (mysql_binlog_fetch(con, &rpl))
+            {
+                fprintf(stderr, "mysql_binlog_fetch() failed\n");
+                fprintf(stderr, "Error %u: %s\n", mysql_errno(con), mysql_error(con));
+                sleep(2);
                 break;
-            case FORMAT_DESCRIPTION_EVENT:
-                printf("FORMAT_DESCRIPTION_EVENT\n");
-                //                if (des_ev) { delete des_ev; }
-                //                des_ev = new Format_description_event(ev, des_ev);
+            }
+            if (rpl.size == 0) /* EOF */
+            {
+                fprintf(stderr, "EOF event received\n");
+                sleep(2);
                 break;
-            case TRANSACTION_PAYLOAD_EVENT:
-                printf("TRANSACTION_PAYLOAD_EVENT\n");
-                break;
-            case TABLE_MAP_EVENT:
-                printf("TABLE_MAP_EVENT\n");
-                //                if (des_ev) {
-                //                    if (tbl_ev) { delete tbl_ev; }
-                //                    tbl_ev = new Table_map_log_event(ev, des_ev);
-                //                    // target table
-                //                    if (strncasecmp(TARGET_TBL, tbl_ev->m_tblnam.c_str(), strlen(TARGET_TBL))== 0){
-                //                        printf("target >> %s\n", TARGET_TBL);
-                //                    }
-                //                }
-                //                break;
-            case WRITE_ROWS_EVENT:
-            case UPDATE_ROWS_EVENT:
-            case DELETE_ROWS_EVENT:
-                //                if (tbl_ev) {
-                //                    ParseEvent event(ev, des_ev);
-                //                    if (event.parse(tbl_ev->create_table_def())) {
-                //                        if (type == WRITE_ROWS_EVENT) {
-                //                        } else if (type == UPDATE_ROWS_EVENT) {
-                //                        } else if (type == DELETE_ROWS_EVENT) {
-                //                        }
-                //                    }
-                //                }
-                break;
-            default:
-                break;
+            }
+            fprintf(stderr, "Event received of size %lu.\n", rpl.size);
+
+            Log_event_type type = (Log_event_type)rpl.buffer[1 + 4];
+            const char* ev = (const char*)(rpl.buffer + 1);
+
+            // processing by event type
+            switch (type)
+            {
+                case ROTATE_EVENT:
+                {
+                    printf("ROTATE_EVENT\n");
+                    std::cout << bytearray2hex(rpl.buffer, rpl.size, 20) << std::endl;
+                    next_log.clear();
+                    for (int i = 20 + 8; i < rpl.size; i++)
+                    {
+                        next_log += rpl.buffer[i];
+                    }
+                    next_log.append("\0");
+                    std::cout << next_log << std::endl;
+                    rpl = {0, nullptr, 4, 1, MYSQL_RPL_SKIP_HEARTBEAT, 0, NULL, NULL, 0, NULL};
+                    rpl.file_name = &next_log.front();
+                    rpl.file_name_length = next_log.size();
+                    std::cout << ">>>>>>>>>>>>>>>>>>>>>>>>>>> " << next_log << std::endl;
+                    break;
+                }
+                case FORMAT_DESCRIPTION_EVENT:
+                    printf("FORMAT_DESCRIPTION_EVENT\n");
+                    break;
+                case TRANSACTION_PAYLOAD_EVENT:
+                    printf("TRANSACTION_PAYLOAD_EVENT\n");
+                    break;
+                case TABLE_MAP_EVENT:
+                    printf("TABLE_MAP_EVENT\n");
+                    break;
+                case WRITE_ROWS_EVENT:
+                    printf("write_rows_event\n");
+                    break;
+                case UPDATE_ROWS_EVENT:
+                    printf("update_rows_event\n");
+                    break;
+                case DELETE_ROWS_EVENT:
+                    printf("delete_rows_event\n");
+                    break;
+                default:
+                    printf("event_type : %d\n", (int)type);
+                    break;
+            }
         }
+
     }
     mysql_binlog_close(con, &rpl);
     mysql_close(con);
