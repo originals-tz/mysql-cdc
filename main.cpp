@@ -5,11 +5,14 @@
 std::string bytearray2hex(const unsigned char byte_arr[], int arr_len, int offset = 0)
 {
     std::string hexstr = "";
+    std::string source;
     for (int i = offset; i < arr_len; i++)
     {
         char hex1;
         char hex2;
         int value = byte_arr[i];
+        source += std::to_string(value);
+        source += " ";
         int v1 = value / 16;
         int v2 = value % 16;
 
@@ -31,6 +34,7 @@ std::string bytearray2hex(const unsigned char byte_arr[], int arr_len, int offse
 
         hexstr = hexstr + hex1 + hex2 + " ";
     }
+    std::cout << source << std::endl;
     return hexstr;
 }
 
@@ -114,11 +118,9 @@ int main()
         exit(1);
     }
 
-    //    std::string file_name = "mysql-bin.000004";
-
     MYSQL_RPL rpl = {0, nullptr, 4, 1, MYSQL_RPL_SKIP_HEARTBEAT, 0, NULL, NULL, 0, NULL};
     std::string next_log;
-    for (;;) /* read events until error or EOF */
+    for (;;)
     {
         if (mysql_binlog_open(con, &rpl))
         {
@@ -144,16 +146,17 @@ int main()
             }
             fprintf(stderr, "Event received of size %lu.\n", rpl.size);
 
+            // (Log_event_type)net->read_pos[1 + EVENT_TYPE_OFFSET] : https://github.com/mysql/mysql-server/blob/8.0/sql-common/client.cc#L7267
+            // rpl.buffer[0] is packet header, https://dev.mysql.com/doc/dev/mysql-server/latest/page_protocol_basic_ok_packet.html
             Log_event_type type = (Log_event_type)rpl.buffer[1 + 4];
             const char* ev = (const char*)(rpl.buffer + 1);
-
             // processing by event type
             switch (type)
             {
                 case ROTATE_EVENT:
                 {
                     printf("ROTATE_EVENT\n");
-                    std::cout << bytearray2hex(rpl.buffer, rpl.size, 20) << std::endl;
+                    std::cout << bytearray2hex(rpl.buffer, rpl.size, 0) << std::endl;
                     next_log.clear();
                     for (int i = 20 + 8; i < rpl.size; i++)
                     {
