@@ -1,42 +1,5 @@
 #include <mysql/mysql.h>
 #include <iostream>
-#include "unistd.h"
-
-std::string bytearray2hex(const unsigned char byte_arr[], int arr_len, int offset = 0)
-{
-    std::string hexstr = "";
-    std::string source;
-    for (int i = offset; i < arr_len; i++)
-    {
-        char hex1;
-        char hex2;
-        int value = byte_arr[i];
-        source += std::to_string(value);
-        source += " ";
-        int v1 = value / 16;
-        int v2 = value % 16;
-
-        if (v1 >= 0 && v1 <= 9)
-            hex1 = (char)(48 + v1);
-        else
-            hex1 = (char)(55 + v1);
-
-        if (v2 >= 0 && v2 <= 9)
-            hex2 = (char)(48 + v2);
-        else
-            hex2 = (char)(55 + v2);
-
-        if (hex1 >= 'A' && hex1 <= 'F')
-            hex1 += 32;
-
-        if (hex2 >= 'A' && hex2 <= 'F')
-            hex2 += 32;
-
-        hexstr = hexstr + hex1 + hex2 + " ";
-    }
-    std::cout << source << std::endl;
-    return hexstr;
-}
 
 enum Log_event_type {
 
@@ -94,108 +57,120 @@ enum Log_event_type {
 
 };
 
-// ref : https://github.com/mixigroup/mixi-pgw/blob/main/binlog/main.cc
-int main()
+class BinlogReader
 {
-    MYSQL* con = mysql_init(NULL);
-    if (con == nullptr)
+public:
+    bool Run(const std::string& host, const std::string& username, const std::string& password, int32_t port = 3306)
     {
-        fprintf(stderr, "%s\n", mysql_error(con));
-        exit(1);
+        MYSQL* con = mysql_init(nullptr);
+        if (mysql_real_connect(con, host.c_str(), username.c_str(), password.c_str(), nullptr, port, nullptr, 0) == nullptr)
+        {
+            fprintf(stderr, "%s\n", mysql_error(con));
+            mysql_close(con);
+            return false;
+        }
+
+        if (mysql_query(con, "SET @master_binlog_checksum='NONE', @source_binlog_checksum = 'NONE'"))
+        {
+            fprintf(stderr, "mysql_query() failed\n");
+            fprintf(stderr, "Error %u: %s\n", mysql_errno(con), mysql_error(con));
+            return false;
+        }
+
+        MYSQL_RPL rpl = {
+             0,
+             nullptr,
+            4,
+            1,
+            MYSQL_RPL_SKIP_HEARTBEAT,
+            0, nullptr,
+            nullptr,
+            0,
+            nullptr};
+        FetchBinlog(con, rpl);
+        return true;
     }
 
-    if (mysql_real_connect(con, "0.0.0.0", "root", "123456", "log_test", 3306, nullptr, 0) == nullptr)
-    {
-        fprintf(stderr, "%s\n", mysql_error(con));
-        mysql_close(con);
-        exit(1);
-    }
-
-    if (mysql_query(con, "SET @master_binlog_checksum='NONE', @source_binlog_checksum = 'NONE'"))
-    {
-        fprintf(stderr, "mysql_query() failed\n");
-        fprintf(stderr, "Error %u: %s\n", mysql_errno(con), mysql_error(con));
-        exit(1);
-    }
-
-    MYSQL_RPL rpl = {0, nullptr, 4, 1, MYSQL_RPL_SKIP_HEARTBEAT, 0, NULL, NULL, 0, NULL};
-    std::string next_log;
-    for (;;)
+    void FetchBinlog(MYSQL* con, MYSQL_RPL& rpl)
     {
         if (mysql_binlog_open(con, &rpl))
         {
             fprintf(stderr, "mysql_binlog_open() failed\n");
             fprintf(stderr, "Error %u: %s\n", mysql_errno(con), mysql_error(con));
-            exit(1);
+            return;
         }
 
-        for (;;)
+        while(true)
         {
             if (mysql_binlog_fetch(con, &rpl))
             {
                 fprintf(stderr, "mysql_binlog_fetch() failed\n");
                 fprintf(stderr, "Error %u: %s\n", mysql_errno(con), mysql_error(con));
-                sleep(2);
-                break;
+                return;
             }
-            if (rpl.size == 0) /* EOF */
+            if (rpl.size == 0)
             {
                 fprintf(stderr, "EOF event received\n");
-                sleep(2);
-                break;
+                return;
             }
-            fprintf(stderr, "Event received of size %lu.\n", rpl.size);
 
             // (Log_event_type)net->read_pos[1 + EVENT_TYPE_OFFSET] : https://github.com/mysql/mysql-server/blob/8.0/sql-common/client.cc#L7267
             // rpl.buffer[0] is packet header, https://dev.mysql.com/doc/dev/mysql-server/latest/page_protocol_basic_ok_packet.html
-            Log_event_type type = (Log_event_type)rpl.buffer[1 + 4];
-            const char* ev = (const char*)(rpl.buffer + 1);
-            // processing by event type
+            auto type = (Log_event_type)rpl.buffer[1 + 4];
+            const char* event_content = (const char*)(rpl.buffer + 1);
+
             switch (type)
             {
                 case ROTATE_EVENT:
                 {
-                    printf("ROTATE_EVENT\n");
-                    std::cout << bytearray2hex(rpl.buffer, rpl.size, 0) << std::endl;
-                    next_log.clear();
-                    for (int i = 20 + 8; i < rpl.size; i++)
-                    {
-                        next_log += rpl.buffer[i];
-                    }
-                    next_log.append("\0");
-                    std::cout << next_log << std::endl;
-                    rpl = {0, nullptr, 4, 1, MYSQL_RPL_SKIP_HEARTBEAT, 0, NULL, NULL, 0, NULL};
-                    rpl.file_name = &next_log.front();
-                    rpl.file_name_length = next_log.size();
-                    std::cout << ">>>>>>>>>>>>>>>>>>>>>>>>>>> " << next_log << std::endl;
+                    HexStr(rpl.buffer + 1, rpl.size - 1);
+                    std::string log(event_content + 19 + 8);
+                    printf("next_log : %s\n", log.c_str());
                     break;
                 }
-                case FORMAT_DESCRIPTION_EVENT:
-                    printf("FORMAT_DESCRIPTION_EVENT\n");
-                    break;
-                case TRANSACTION_PAYLOAD_EVENT:
-                    printf("TRANSACTION_PAYLOAD_EVENT\n");
-                    break;
-                case TABLE_MAP_EVENT:
-                    printf("TABLE_MAP_EVENT\n");
-                    break;
-                case WRITE_ROWS_EVENT:
-                    printf("write_rows_event\n");
-                    break;
-                case UPDATE_ROWS_EVENT:
-                    printf("update_rows_event\n");
-                    break;
-                case DELETE_ROWS_EVENT:
-                    printf("delete_rows_event\n");
-                    break;
                 default:
-                    printf("event_type : %d\n", (int)type);
                     break;
-            }
+            };
         }
-
     }
-    mysql_binlog_close(con, &rpl);
-    mysql_close(con);
+
+private:
+    void HexStr(const unsigned char byte_arr[], int arr_len, int offset = 0)
+    {
+        std::string hexstr;
+        for (int i = offset; i < arr_len; i++)
+        {
+            char hex1;
+            char hex2;
+            int value = byte_arr[i];
+            int v1 = value / 16;
+            int v2 = value % 16;
+
+            if (v1 >= 0 && v1 <= 9)
+                hex1 = (char)(48 + v1);
+            else
+                hex1 = (char)(55 + v1);
+
+            if (v2 >= 0 && v2 <= 9)
+                hex2 = (char)(48 + v2);
+            else
+                hex2 = (char)(55 + v2);
+
+            if (hex1 >= 'A' && hex1 <= 'F')
+                hex1 += 32;
+
+            if (hex2 >= 'A' && hex2 <= 'F')
+                hex2 += 32;
+
+            hexstr = hexstr + hex1 + hex2 + " ";
+        }
+        std::cout << hexstr << std::endl;
+    }
+};
+
+int main()
+{
+    BinlogReader reader;
+    reader.Run("0.0.0.0", "root", "123456");
     return 0;
 }
