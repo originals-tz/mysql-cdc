@@ -2,6 +2,7 @@
 #include <array>
 #include <cstring>
 #include <iostream>
+#include <vector>
 
 enum Log_event_type {
 
@@ -24,7 +25,6 @@ enum Log_event_type {
     /**
 
     The V1 event numbers are used from 5.1.16 until mysql-5.6.
-
                                                                     */
 
     WRITE_ROWS_EVENT_V1 = 23,
@@ -105,10 +105,43 @@ std::string GetName(Log_event_type type)
             return "";
     };
 }
+struct MYSQL_INT_LENENC
+{
+   void Init(const unsigned char* ptr)
+   {
+       if (*ptr < 0xfb)
+       {
+           m_value = uint64_t(*ptr);
+           m_len = 1;
+       }
+
+       if (*ptr < 0xfc)
+       {
+           memcpy((unsigned char*)m_value, ptr, 2);
+           m_len = 3;
+       }
+
+       if (*ptr < 0xfd)
+       {
+           memcpy((unsigned char*)m_value, ptr, 3);
+           m_len = 4;
+       }
+
+       if (*ptr < 0xfe)
+       {
+           memcpy((unsigned char*)m_value, ptr, 8);
+           m_len = 9;
+       }
+
+   }
+
+   uint64_t m_value = 0;
+   uint16_t m_len = 0;
+};
 
 struct MYSQL_FORMAT_DESCRIPTION_EVENT
 {
-    explicit MYSQL_FORMAT_DESCRIPTION_EVENT(const unsigned char* ptr)
+    void Init(const unsigned char* ptr)
     {
         /**
         https://dev.mysql.com/doc/internals/en/format-description-event.html
@@ -125,7 +158,7 @@ struct MYSQL_FORMAT_DESCRIPTION_EVENT
         ptr += 50;
         m_create_time = *(uint32_t*)ptr;
         ptr += 4;
-        m_event_header_len = uint32_t(*ptr);
+        m_event_header_len = uint8_t(*ptr);
         ptr += 1;
         for (int i = 1; i < ENUM_END_EVENT + 1; i++)
         {
@@ -136,8 +169,69 @@ struct MYSQL_FORMAT_DESCRIPTION_EVENT
     uint16_t m_version = 0;
     std::string m_mysql_version;
     uint32_t m_create_time = 0;
-    uint32_t m_event_header_len = 0;
+    uint8_t m_event_header_len = 0;
     unsigned char m_event_type_header_len[ENUM_END_EVENT + 1]{0};
+};
+
+
+
+struct MYSQL_TABLE_MAP_EVENT
+{
+    void Init(const unsigned char* ptr, uint32_t event_header_len)
+    {
+        /**
+        https://dev.mysql.com/doc/internals/en/table-map-event.html
+        post-header:
+        if post_header_len == 6 {
+            4              table id
+        } else {
+            6              table id
+        }
+        2              flags
+        payload:
+        1              schema name length
+        string         schema name
+        1              [00]
+        1              table name length
+        string         table name
+        1              [00]
+        lenenc-int     column-count
+        string.var_len [length=$column-count] column-def
+        TODO lenenc-str     column-meta-def
+        TODO n              NULL-bitmask, length: (column-count + 8) / 7
+        **/
+        if (event_header_len == 6)
+        {
+            memcpy((unsigned char*)&m_table_id, ptr, 4);
+            memcpy((unsigned char*)&m_flag, ptr+4, 2);
+        }
+        else
+        {
+            memcpy((unsigned char*)&m_table_id, ptr, 6);
+            memcpy((unsigned char*)&m_flag, ptr+6, 2);
+        }
+        ptr += event_header_len;
+        m_schema_name_len = uint8_t(*ptr);
+        ptr++;
+        m_schema_name = (char*)ptr;
+        ptr += m_schema_name.size() + 1;
+        m_table_name_len = uint8_t(*ptr);
+        ptr++;
+        m_table_name = (char*)ptr;
+        ptr += m_table_name.size() + 1;
+        m_column_count.Init(ptr);
+        ptr += m_column_count.m_len;
+        m_column_type.assign((char*)ptr, m_column_count.m_len);
+    }
+
+    uint64_t m_table_id = 0;
+    uint16_t m_flag = 0;
+    uint8_t m_schema_name_len = 0;
+    std::string m_schema_name;
+    uint8_t m_table_name_len = 0;
+    std::string m_table_name;
+    MYSQL_INT_LENENC m_column_count;
+    std::string m_column_type;
 };
 
 class BinlogReader
@@ -174,6 +268,7 @@ public:
             return;
         }
 
+        MYSQL_FORMAT_DESCRIPTION_EVENT fde;
         while (true)
         {
             if (mysql_binlog_fetch(con, &rpl))
@@ -208,8 +303,15 @@ public:
                 }
                 case FORMAT_DESCRIPTION_EVENT:
                 {
-                    MYSQL_FORMAT_DESCRIPTION_EVENT event(event_body);
+                    fde.Init(event_body);
                     break;
+                }
+                case TABLE_MAP_EVENT:
+                {
+                    int len  = (int)fde.m_event_type_header_len[TABLE_MAP_EVENT];
+                    MYSQL_TABLE_MAP_EVENT event;
+                    event.Init(event_body, len);
+                    std::cout << GetName(type) << std::endl;
                 }
                 default:
                     break;
