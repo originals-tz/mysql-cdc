@@ -149,17 +149,17 @@ struct MYSQL_INT_LENENC
         }
         else if (*ptr < 0xfc)
         {
-            memcpy((unsigned char*)m_value, ptr, 2);
+            memcpy((unsigned char*)m_value, ptr + 1, 2);
             m_len = 3;
         }
         else if (*ptr < 0xfd)
         {
-            memcpy((unsigned char*)m_value, ptr, 3);
+            memcpy((unsigned char*)m_value, ptr + 1, 3);
             m_len = 4;
         }
         else if (*ptr < 0xfe)
         {
-            memcpy((unsigned char*)m_value, ptr, 8);
+            memcpy((unsigned char*)m_value, ptr + 1, 8);
             m_len = 9;
         }
     }
@@ -304,6 +304,7 @@ public:
         }
 
         MYSQL_FORMAT_DESCRIPTION_EVENT fde;
+        MYSQL_TABLE_MAP_EVENT tme;
         while (true)
         {
             if (mysql_binlog_fetch(con, &rpl))
@@ -344,9 +345,8 @@ public:
                 case TABLE_MAP_EVENT:
                 {
                     int len  = (int)fde.m_event_type_header_len[TABLE_MAP_EVENT];
-                    MYSQL_TABLE_MAP_EVENT event;
-                    event.Init(event_body, len);
-                    m_parse_row = event.m_schema_name == m_schema && event.m_table_name == m_table;
+                    tme.Init(event_body, len);
+                    m_parse_row = tme.m_schema_name == m_schema && tme.m_table_name == m_table;
                     break;
                 }
                 case WRITE_ROWS_EVENT:
