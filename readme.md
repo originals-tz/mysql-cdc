@@ -17,5 +17,6 @@ depend : libmysqlclient.a (mysqlclient-21)
 ```
 mkdir build 
 cd build
+cmake ..
 make -j
 ```
