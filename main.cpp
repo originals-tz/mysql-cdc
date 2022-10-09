@@ -1,4 +1,6 @@
 #include <mysql/mysql.h>
+#include <array>
+#include <cstring>
 #include <iostream>
 
 enum Log_event_type {
@@ -57,6 +59,87 @@ enum Log_event_type {
 
 };
 
+std::string GetName(Log_event_type type)
+{
+#define Case(x) \
+    case x:     \
+        return #x;
+    switch (type)
+    {
+        Case(UNKNOWN_EVENT);
+        Case(START_EVENT_V3);
+        Case(QUERY_EVENT);
+        Case(STOP_EVENT);
+        Case(ROTATE_EVENT);
+        Case(INTVAR_EVENT);
+        Case(SLAVE_EVENT);
+        Case(APPEND_BLOCK_EVENT);
+        Case(DELETE_FILE_EVENT);
+        Case(RAND_EVENT);
+        Case(USER_VAR_EVENT);
+        Case(FORMAT_DESCRIPTION_EVENT);
+        Case(XID_EVENT);
+        Case(BEGIN_LOAD_QUERY_EVENT);
+        Case(EXECUTE_LOAD_QUERY_EVENT);
+        Case(TABLE_MAP_EVENT);
+        Case(WRITE_ROWS_EVENT_V1);
+        Case(UPDATE_ROWS_EVENT_V1);
+        Case(DELETE_ROWS_EVENT_V1);
+        Case(INCIDENT_EVENT);
+        Case(HEARTBEAT_LOG_EVENT);
+        Case(IGNORABLE_LOG_EVENT);
+        Case(ROWS_QUERY_LOG_EVENT);
+        Case(WRITE_ROWS_EVENT);
+        Case(UPDATE_ROWS_EVENT);
+        Case(DELETE_ROWS_EVENT);
+        Case(GTID_LOG_EVENT);
+        Case(ANONYMOUS_GTID_LOG_EVENT);
+        Case(PREVIOUS_GTIDS_LOG_EVENT);
+        Case(TRANSACTION_CONTEXT_EVENT);
+        Case(VIEW_CHANGE_EVENT);
+        Case(XA_PREPARE_LOG_EVENT);
+        Case(PARTIAL_UPDATE_ROWS_EVENT);
+        Case(TRANSACTION_PAYLOAD_EVENT);
+        Case(HEARTBEAT_LOG_EVENT_V2);
+        default:
+            return "";
+    };
+}
+
+struct MYSQL_FORMAT_DESCRIPTION_EVENT
+{
+    explicit MYSQL_FORMAT_DESCRIPTION_EVENT(const unsigned char* ptr)
+    {
+        /**
+        https://dev.mysql.com/doc/internals/en/format-description-event.html
+        2                binlog-version
+        string[50]       mysql-server version
+        4                create timestamp
+        1                event header length
+        string[p]        event type header lengths
+         **/
+
+        m_version = *(uint16_t*)ptr;
+        ptr += 2;
+        m_mysql_version = (char*)ptr;
+        ptr += 50;
+        m_create_time = *(uint32_t*)ptr;
+        ptr += 4;
+        m_event_header_len = uint32_t(*ptr);
+        ptr += 1;
+        for (int i = 1; i < ENUM_END_EVENT + 1; i++)
+        {
+            m_event_type_header_len[i] = *ptr;
+            ptr++;
+        }
+    }
+    uint16_t m_version = 0;
+    std::string m_mysql_version;
+    uint32_t m_create_time = 0;
+    uint32_t m_event_header_len = 0;
+    unsigned char m_event_type_header_len[ENUM_END_EVENT + 1]{0};
+};
+
 class BinlogReader
 {
 public:
@@ -77,16 +160,7 @@ public:
             return false;
         }
 
-        MYSQL_RPL rpl = {
-             0,
-             nullptr,
-            4,
-            1,
-            MYSQL_RPL_SKIP_HEARTBEAT,
-            0, nullptr,
-            nullptr,
-            0,
-            nullptr};
+        MYSQL_RPL rpl = {0, nullptr, 4, 1, MYSQL_RPL_SKIP_HEARTBEAT, 0, nullptr, nullptr, 0, nullptr};
         FetchBinlog(con, rpl);
         return true;
     }
@@ -100,7 +174,7 @@ public:
             return;
         }
 
-        while(true)
+        while (true)
         {
             if (mysql_binlog_fetch(con, &rpl))
             {
@@ -117,15 +191,24 @@ public:
             // (Log_event_type)net->read_pos[1 + EVENT_TYPE_OFFSET] : https://github.com/mysql/mysql-server/blob/8.0/sql-common/client.cc#L7267
             // rpl.buffer[0] is packet header, https://dev.mysql.com/doc/dev/mysql-server/latest/page_protocol_basic_ok_packet.html
             auto type = (Log_event_type)rpl.buffer[1 + 4];
-            const char* event_content = (const char*)(rpl.buffer + 1);
+            auto* event_content = (const unsigned char*)(rpl.buffer + 1);
+
+            // https://dev.mysql.com/doc/internals/en/binlog-event-header.html
+            auto* event_body = (const unsigned char*)(rpl.buffer + 1 + 19);
+            int body_len = rpl.size - 1 - 19;
 
             switch (type)
             {
                 case ROTATE_EVENT:
                 {
                     HexStr(rpl.buffer + 1, rpl.size - 1);
-                    std::string log(event_content + 19 + 8);
+                    std::string log((char*)event_content + 19 + 8);
                     printf("next_log : %s\n", log.c_str());
+                    break;
+                }
+                case FORMAT_DESCRIPTION_EVENT:
+                {
+                    MYSQL_FORMAT_DESCRIPTION_EVENT event(event_body);
                     break;
                 }
                 default:
@@ -135,7 +218,7 @@ public:
     }
 
 private:
-    void HexStr(const unsigned char byte_arr[], int arr_len, int offset = 0)
+    void HexStr(const unsigned char* byte_arr, int arr_len, int offset = 0)
     {
         std::string hexstr;
         for (int i = offset; i < arr_len; i++)
