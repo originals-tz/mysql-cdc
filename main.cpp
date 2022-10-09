@@ -105,35 +105,64 @@ std::string GetName(Log_event_type type)
             return "";
     };
 }
+
+void HexStr(const unsigned char* byte_arr, int arr_len, int offset = 0)
+{
+    std::string hexstr;
+    for (int i = offset; i < arr_len; i++)
+    {
+        char hex1;
+        char hex2;
+        int value = byte_arr[i];
+        int v1 = value / 16;
+        int v2 = value % 16;
+
+        if (v1 >= 0 && v1 <= 9)
+            hex1 = (char)(48 + v1);
+        else
+            hex1 = (char)(55 + v1);
+
+        if (v2 >= 0 && v2 <= 9)
+            hex2 = (char)(48 + v2);
+        else
+            hex2 = (char)(55 + v2);
+
+        if (hex1 >= 'A' && hex1 <= 'F')
+            hex1 += 32;
+
+        if (hex2 >= 'A' && hex2 <= 'F')
+            hex2 += 32;
+
+        hexstr = hexstr + hex1 + hex2 + " ";
+    }
+    std::cout << hexstr << std::endl;
+}
+
 struct MYSQL_INT_LENENC
 {
-   void Init(const unsigned char* ptr)
-   {
-       if (*ptr < 0xfb)
-       {
-           m_value = uint64_t(*ptr);
-           m_len = 1;
-       }
-
-       if (*ptr < 0xfc)
-       {
-           memcpy((unsigned char*)m_value, ptr, 2);
-           m_len = 3;
-       }
-
-       if (*ptr < 0xfd)
-       {
-           memcpy((unsigned char*)m_value, ptr, 3);
-           m_len = 4;
-       }
-
-       if (*ptr < 0xfe)
-       {
-           memcpy((unsigned char*)m_value, ptr, 8);
-           m_len = 9;
-       }
-
-   }
+    void Init(const unsigned char* ptr)
+    {
+        if (*ptr < 0xfb)
+        {
+            m_value = uint64_t(*ptr);
+            m_len = 1;
+        }
+        else if (*ptr < 0xfc)
+        {
+            memcpy((unsigned char*)m_value, ptr, 2);
+            m_len = 3;
+        }
+        else if (*ptr < 0xfd)
+        {
+            memcpy((unsigned char*)m_value, ptr, 3);
+            m_len = 4;
+        }
+        else if (*ptr < 0xfe)
+        {
+            memcpy((unsigned char*)m_value, ptr, 8);
+            m_len = 9;
+        }
+    }
 
    uint64_t m_value = 0;
    uint16_t m_len = 0;
@@ -237,6 +266,12 @@ struct MYSQL_TABLE_MAP_EVENT
 class BinlogReader
 {
 public:
+    void SetTargetTable(const std::string& schema, const std::string& table)
+    {
+        m_schema = schema;
+        m_table = table;
+    }
+
     bool Run(const std::string& host, const std::string& username, const std::string& password, int32_t port = 3306)
     {
         MYSQL* con = mysql_init(nullptr);
@@ -311,7 +346,17 @@ public:
                     int len  = (int)fde.m_event_type_header_len[TABLE_MAP_EVENT];
                     MYSQL_TABLE_MAP_EVENT event;
                     event.Init(event_body, len);
-                    std::cout << GetName(type) << std::endl;
+                    m_parse_row = event.m_schema_name == m_schema && event.m_table_name == m_table;
+                    break;
+                }
+                case WRITE_ROWS_EVENT:
+                case WRITE_ROWS_EVENT_V1:
+                {
+                    if (m_parse_row)
+                    {
+                        std::cout <<  GetName(type) << std::endl;
+                    }
+                    break;
                 }
                 default:
                     break;
@@ -320,42 +365,15 @@ public:
     }
 
 private:
-    void HexStr(const unsigned char* byte_arr, int arr_len, int offset = 0)
-    {
-        std::string hexstr;
-        for (int i = offset; i < arr_len; i++)
-        {
-            char hex1;
-            char hex2;
-            int value = byte_arr[i];
-            int v1 = value / 16;
-            int v2 = value % 16;
-
-            if (v1 >= 0 && v1 <= 9)
-                hex1 = (char)(48 + v1);
-            else
-                hex1 = (char)(55 + v1);
-
-            if (v2 >= 0 && v2 <= 9)
-                hex2 = (char)(48 + v2);
-            else
-                hex2 = (char)(55 + v2);
-
-            if (hex1 >= 'A' && hex1 <= 'F')
-                hex1 += 32;
-
-            if (hex2 >= 'A' && hex2 <= 'F')
-                hex2 += 32;
-
-            hexstr = hexstr + hex1 + hex2 + " ";
-        }
-        std::cout << hexstr << std::endl;
-    }
+    bool m_parse_row = false;
+    std::string m_schema;
+    std::string m_table;
 };
 
 int main()
 {
     BinlogReader reader;
+    reader.SetTargetTable("cdc", "test");
     reader.Run("0.0.0.0", "root", "123456");
     return 0;
 }
