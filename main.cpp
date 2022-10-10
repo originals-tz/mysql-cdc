@@ -208,60 +208,6 @@ struct MYSQL_FORMAT_DESCRIPTION_EVENT
     unsigned char m_event_type_header_len[ENUM_END_EVENT + 1]{0};
 };
 
-struct MYSQL_WRITE_ROW_EVENT
-{
-    void Init(const unsigned char* ptr, MYSQL_FORMAT_DESCRIPTION_EVENT& fde)
-    {
-        /**
-    header:
-        if post_header_len == 6 {
-            4                    table id
-        } else {
-            6                    table id
-        }
-        2                    flags
-        if version == 2 {
-            2                    extra-data-length
-            string.var_len       extra-data
-        }
-        body:
-        lenenc_int           number of columns
-        string.var_len       columns-present-bitmap1, length: (num of columns+7)/8
-        rows:
-        string.var_len       nul-bitmap, length (bits set in 'columns-present-bitmap1'+7)/8
-        string.var_len       value of each field as defined in table-map
-        ... repeat rows until event-end
-         **/
-        int event_header_len  = (int)fde.m_event_type_header_len[WRITE_ROWS_EVENT];
-        if (event_header_len == 6)
-        {
-            ReadData(m_table_id, ptr, 4);
-            ReadData(m_flag, ptr + 4, 2);
-        }
-        else
-        {
-            ReadData(m_table_id, ptr, 6);
-            ReadData(m_flag, ptr + 6, 2);
-            m_extra_data_len = *(uint16_t*)(ptr + 8);
-        }
-
-        ptr += event_header_len;
-        if (m_extra_data_len)
-        {
-            ptr += m_extra_data_len;
-        }
-        m_number_of_columns.Init(ptr);
-        ptr += m_number_of_columns.m_len;
-        uint64_t bitmap_len = (m_number_of_columns.m_len + 7) / 8;
-        m_bitmap.assign((char*)ptr, bitmap_len);
-    }
-
-    uint32_t m_table_id = 0;
-    uint16_t m_flag = 0;
-    uint16_t m_extra_data_len = 0;
-    MYSQL_INT_LENENC m_number_of_columns;
-    std::string m_bitmap;
-};
 
 struct MYSQL_TABLE_MAP_EVENT
 {
@@ -310,7 +256,7 @@ struct MYSQL_TABLE_MAP_EVENT
         ptr += m_table_name.size() + 1;
         m_column_count.Init(ptr);
         ptr += m_column_count.m_len;
-        m_column_type.assign((char*)ptr, m_column_count.m_len);
+        m_column_type.assign((char*)ptr, m_column_count.m_value);
     }
 
     uint64_t m_table_id = 0;
@@ -322,6 +268,92 @@ struct MYSQL_TABLE_MAP_EVENT
     MYSQL_INT_LENENC m_column_count;
     std::string m_column_type;
 };
+
+struct MYSQL_WRITE_ROW_EVENT
+{
+    void Init(const unsigned char* ptr, MYSQL_FORMAT_DESCRIPTION_EVENT& fde, MYSQL_TABLE_MAP_EVENT& tme)
+    {
+        /**
+    header:
+        if post_header_len == 6 {
+            4                    table id
+        } else {
+            6                    table id
+        }
+        2                    flags
+        if version == 2 {
+            2                    extra-data-length
+            string.var_len       extra-data
+        }
+        body:
+        lenenc_int           number of columns
+        string.var_len       columns-present-bitmap1, length: (num of columns+7)/8
+        rows:
+        string.var_len       nul-bitmap, length (bits set in 'columns-present-bitmap1'+7)/8
+        string.var_len       value of each field as defined in table-map
+        ... repeat rows until event-end
+         **/
+        int event_header_len  = (int)fde.m_event_type_header_len[WRITE_ROWS_EVENT];
+        if (event_header_len == 6)
+        {
+            ReadData(m_table_id, ptr, 4);
+            ReadData(m_flag, ptr + 4, 2);
+        }
+        else
+        {
+            ReadData(m_table_id, ptr, 6);
+            ReadData(m_flag, ptr + 6, 2);
+            m_extra_data_len = *(uint16_t*)(ptr + 8) - 2;
+        }
+
+        ptr += event_header_len;
+        if (m_extra_data_len)
+        {
+            ptr += m_extra_data_len;
+        }
+        m_number_of_columns.Init(ptr);
+        ptr += m_number_of_columns.m_len;
+
+        uint64_t bitmap_len = (m_number_of_columns.m_len + 7) / 8;
+        m_columns_present_bitmap1.assign((char*)ptr, bitmap_len);
+        ptr += bitmap_len;
+
+        // string.var_len       nul-bitmap, length (bits set in 'columns-present-bitmap1'+7)/8
+        // columns-present-bitmap1 = 0xff = 1111 1111, length = (8+7)/8
+        uint64_t nullmap_len = bitmap_len;
+        m_null_bitmap.assign((char*)ptr, nullmap_len);
+        ptr += nullmap_len;
+        for (int i = 0; i < tme.m_column_count.m_value; i++)
+        {
+            uint32_t type = (unsigned char)tme.m_column_type[i];
+            //https://dev.mysql.com/doc/internals/en/binary-protocol-value.html
+            //TODO using meta to parse
+            switch (type)
+            {
+                case MYSQL_TYPE_LONG:
+                {
+                    auto* i32_p = (int32_t*)ptr;
+                    std::cout << *i32_p << std::endl;
+                    ptr += 4;
+                    break;
+                }
+                case MYSQL_TYPE_STRING:
+                {
+                    return;
+                }
+                default: break;
+            }
+        }
+    }
+
+    uint32_t m_table_id = 0;
+    uint16_t m_flag = 0;
+    uint16_t m_extra_data_len = 0;
+    MYSQL_INT_LENENC m_number_of_columns;
+    std::string m_columns_present_bitmap1;
+    std::string m_null_bitmap;
+};
+
 
 class BinlogReader
 {
@@ -403,7 +435,6 @@ public:
                 }
                 case TABLE_MAP_EVENT:
                 {
-                    int len  = (int)fde.m_event_type_header_len[TABLE_MAP_EVENT];
                     tme.Init(event_body, fde);
                     m_parse_row = tme.m_schema_name == m_schema && tme.m_table_name == m_table;
                     break;
@@ -413,9 +444,9 @@ public:
                 {
                     if (m_parse_row)
                     {
-                        MYSQL_WRITE_ROW_EVENT event;
                         HexStr(rpl.buffer + 1 + 19, rpl.size - 1 - 19);
-                        event.Init(event_body, fde);
+                        MYSQL_WRITE_ROW_EVENT event;
+                        event.Init(event_body, fde, tme);
                         std::cout <<  GetName(type) << std::endl;
                     }
                     break;
@@ -435,7 +466,7 @@ private:
 int main()
 {
     BinlogReader reader;
-    reader.SetTargetTable("cdc", "test");
+    reader.SetTargetTable("cdc", "test2");
     reader.Run("0.0.0.0", "root", "123456");
     return 0;
 }
