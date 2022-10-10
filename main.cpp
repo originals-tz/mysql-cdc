@@ -138,6 +138,12 @@ void HexStr(const unsigned char* byte_arr, int arr_len, int offset = 0)
     std::cout << hexstr << std::endl;
 }
 
+template<typename T>
+void ReadData(T& data, const unsigned char* ptr, int32_t bytes)
+{
+    memcpy((unsigned char*)&data, ptr, bytes);
+}
+
 struct MYSQL_INT_LENENC
 {
     void Init(const unsigned char* ptr)
@@ -149,17 +155,17 @@ struct MYSQL_INT_LENENC
         }
         else if (*ptr < 0xfc)
         {
-            memcpy((unsigned char*)m_value, ptr + 1, 2);
+            ReadData(m_value, ptr+1, 2);
             m_len = 3;
         }
         else if (*ptr < 0xfd)
         {
-            memcpy((unsigned char*)m_value, ptr + 1, 3);
+            ReadData(m_value, ptr+1, 3);
             m_len = 4;
         }
         else if (*ptr < 0xfe)
         {
-            memcpy((unsigned char*)m_value, ptr + 1, 8);
+            ReadData(m_value, ptr+1, 8);
             m_len = 9;
         }
     }
@@ -181,7 +187,7 @@ struct MYSQL_FORMAT_DESCRIPTION_EVENT
         string[p]        event type header lengths
          **/
 
-        m_version = *(uint16_t*)ptr;
+        m_binlog_version = *(uint16_t*)ptr;
         ptr += 2;
         m_mysql_version = (char*)ptr;
         ptr += 50;
@@ -195,18 +201,71 @@ struct MYSQL_FORMAT_DESCRIPTION_EVENT
             ptr++;
         }
     }
-    uint16_t m_version = 0;
+    uint16_t m_binlog_version = 0;
     std::string m_mysql_version;
     uint32_t m_create_time = 0;
     uint8_t m_event_header_len = 0;
     unsigned char m_event_type_header_len[ENUM_END_EVENT + 1]{0};
 };
 
+struct MYSQL_WRITE_ROW_EVENT
+{
+    void Init(const unsigned char* ptr, MYSQL_FORMAT_DESCRIPTION_EVENT& fde)
+    {
+        /**
+    header:
+        if post_header_len == 6 {
+            4                    table id
+        } else {
+            6                    table id
+        }
+        2                    flags
+        if version == 2 {
+            2                    extra-data-length
+            string.var_len       extra-data
+        }
+        body:
+        lenenc_int           number of columns
+        string.var_len       columns-present-bitmap1, length: (num of columns+7)/8
+        rows:
+        string.var_len       nul-bitmap, length (bits set in 'columns-present-bitmap1'+7)/8
+        string.var_len       value of each field as defined in table-map
+        ... repeat rows until event-end
+         **/
+        int event_header_len  = (int)fde.m_event_type_header_len[WRITE_ROWS_EVENT];
+        if (event_header_len == 6)
+        {
+            ReadData(m_table_id, ptr, 4);
+            ReadData(m_flag, ptr + 4, 2);
+        }
+        else
+        {
+            ReadData(m_table_id, ptr, 6);
+            ReadData(m_flag, ptr + 6, 2);
+            m_extra_data_len = *(uint16_t*)(ptr + 8);
+        }
 
+        ptr += event_header_len;
+        if (m_extra_data_len)
+        {
+            ptr += m_extra_data_len;
+        }
+        m_number_of_columns.Init(ptr);
+        ptr += m_number_of_columns.m_len;
+        uint64_t bitmap_len = (m_number_of_columns.m_len + 7) / 8;
+        m_bitmap.assign((char*)ptr, bitmap_len);
+    }
+
+    uint32_t m_table_id = 0;
+    uint16_t m_flag = 0;
+    uint16_t m_extra_data_len = 0;
+    MYSQL_INT_LENENC m_number_of_columns;
+    std::string m_bitmap;
+};
 
 struct MYSQL_TABLE_MAP_EVENT
 {
-    void Init(const unsigned char* ptr, uint32_t event_header_len)
+    void Init(const unsigned char* ptr, MYSQL_FORMAT_DESCRIPTION_EVENT& fde)
     {
         /**
         https://dev.mysql.com/doc/internals/en/table-map-event.html
@@ -229,15 +288,16 @@ struct MYSQL_TABLE_MAP_EVENT
         TODO lenenc-str     column-meta-def
         TODO n              NULL-bitmask, length: (column-count + 8) / 7
         **/
+        int event_header_len  = (int)fde.m_event_type_header_len[TABLE_MAP_EVENT];
         if (event_header_len == 6)
         {
-            memcpy((unsigned char*)&m_table_id, ptr, 4);
-            memcpy((unsigned char*)&m_flag, ptr+4, 2);
+            ReadData(m_table_id, ptr, 4);
+            ReadData(m_flag, ptr + 4, 2);
         }
         else
         {
-            memcpy((unsigned char*)&m_table_id, ptr, 6);
-            memcpy((unsigned char*)&m_flag, ptr+6, 2);
+            ReadData(m_table_id, ptr, 6);
+            ReadData(m_flag, ptr + 6, 2);
         }
         ptr += event_header_len;
         m_schema_name_len = uint8_t(*ptr);
@@ -332,7 +392,6 @@ public:
             {
                 case ROTATE_EVENT:
                 {
-                    HexStr(rpl.buffer + 1, rpl.size - 1);
                     std::string log((char*)event_content + 19 + 8);
                     printf("next_log : %s\n", log.c_str());
                     break;
@@ -345,7 +404,7 @@ public:
                 case TABLE_MAP_EVENT:
                 {
                     int len  = (int)fde.m_event_type_header_len[TABLE_MAP_EVENT];
-                    tme.Init(event_body, len);
+                    tme.Init(event_body, fde);
                     m_parse_row = tme.m_schema_name == m_schema && tme.m_table_name == m_table;
                     break;
                 }
@@ -354,6 +413,9 @@ public:
                 {
                     if (m_parse_row)
                     {
+                        MYSQL_WRITE_ROW_EVENT event;
+                        HexStr(rpl.buffer + 1 + 19, rpl.size - 1 - 19);
+                        event.Init(event_body, fde);
                         std::cout <<  GetName(type) << std::endl;
                     }
                     break;
