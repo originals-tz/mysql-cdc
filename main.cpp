@@ -3,6 +3,7 @@
 #include <cstring>
 #include <iostream>
 #include <vector>
+#include <cassert>
 
 enum Log_event_type {
 
@@ -265,29 +266,35 @@ struct MYSQL_TABLE_MAP_EVENT
 
         m_column_type.assign((char*)ptr, m_column_count.m_value);
         ptr += m_column_count.m_value;
-ptr++;
-        ptr++;
-        ptr++;
-        for (int i = 0; i < m_column_count.m_value; i++)
+
+        m_meta_len.Init(ptr);
+        ptr+=m_meta_len.m_len;
+        if (m_meta_len.m_value)
         {
-            uint32_t type = (unsigned char)m_column_type[i];
-            uint32_t len = MetaDataLen(type);
-            if (len == 1)
+            for (int i = 0; i < m_column_count.m_value; i++)
             {
-                len = (uint32_t)*ptr;
-                ptr +=1;
+                uint32_t type = (unsigned char)m_column_type[i];
+                uint32_t len = MetaDataLen(type);
+                if (len == 1)
+                {
+                    len = (uint32_t)*ptr;
+                    ptr +=1;
+                }
+                else if (len == 2)
+                {
+                    uint16_t val1 = *(uint16_t*)ptr;
+                    ptr += 2;
+                }
+                m_meta_vect.emplace_back(len);
             }
-            else if (len == 2)
-            {
-                uint16_t val1 = *(uint16_t*)ptr;
-                ptr += 2;
-            }
-            m_meta_vect.emplace_back(len);
         }
         uint32_t null_bitmask_len = (m_column_count.m_value + 8) / 7;
         m_nullbitmask.assign((char*)ptr, null_bitmask_len);
-        size_t diff = end - ptr;
         ptr += null_bitmask_len;
+        m_opt_meta_len.Init(ptr);
+        ptr += m_opt_meta_len.m_len;
+        ptr += m_opt_meta_len.m_value;
+        size_t diff = end - ptr;
     }
 
     uint32_t MetaDataLen(uint32_t type)
@@ -328,7 +335,9 @@ ptr++;
     std::string m_table_name;
     MYSQL_INT_LENENC m_column_count;
     std::string m_column_type;
+    MYSQL_INT_LENENC m_meta_len;
     std::vector<uint32_t> m_meta_vect;
+    MYSQL_INT_LENENC m_opt_meta_len;
     std::string m_nullbitmask;
 };
 
