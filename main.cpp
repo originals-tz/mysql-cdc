@@ -211,7 +211,7 @@ struct MYSQL_FORMAT_DESCRIPTION_EVENT
 
 struct MYSQL_TABLE_MAP_EVENT
 {
-    void Init(const unsigned char* ptr, MYSQL_FORMAT_DESCRIPTION_EVENT& fde)
+    void Init(const unsigned char* ptr, MYSQL_FORMAT_DESCRIPTION_EVENT& fde, const unsigned char* end)
     {
         /**
         https://dev.mysql.com/doc/internals/en/table-map-event.html
@@ -234,6 +234,7 @@ struct MYSQL_TABLE_MAP_EVENT
         TODO lenenc-str     column-meta-def
         TODO n              NULL-bitmask, length: (column-count + 8) / 7
         **/
+        // 10+ 1+4 + 1+5 + 1+3
         int event_header_len  = (int)fde.m_event_type_header_len[TABLE_MAP_EVENT];
         if (event_header_len == 6)
         {
@@ -246,17 +247,77 @@ struct MYSQL_TABLE_MAP_EVENT
             ReadData(m_flag, ptr + 6, 2);
         }
         ptr += event_header_len;
+
         m_schema_name_len = uint8_t(*ptr);
         ptr++;
+
         m_schema_name = (char*)ptr;
         ptr += m_schema_name.size() + 1;
+
         m_table_name_len = uint8_t(*ptr);
         ptr++;
+
         m_table_name = (char*)ptr;
         ptr += m_table_name.size() + 1;
+
         m_column_count.Init(ptr);
         ptr += m_column_count.m_len;
+
         m_column_type.assign((char*)ptr, m_column_count.m_value);
+        ptr += m_column_count.m_value;
+ptr++;
+        ptr++;
+        ptr++;
+        for (int i = 0; i < m_column_count.m_value; i++)
+        {
+            uint32_t type = (unsigned char)m_column_type[i];
+            uint32_t len = MetaDataLen(type);
+            if (len == 1)
+            {
+                len = (uint32_t)*ptr;
+                ptr +=1;
+            }
+            else if (len == 2)
+            {
+                uint16_t val1 = *(uint16_t*)ptr;
+                ptr += 2;
+            }
+            m_meta_vect.emplace_back(len);
+        }
+        uint32_t null_bitmask_len = (m_column_count.m_value + 8) / 7;
+        m_nullbitmask.assign((char*)ptr, null_bitmask_len);
+        size_t diff = end - ptr;
+        ptr += null_bitmask_len;
+    }
+
+    uint32_t MetaDataLen(uint32_t type)
+    {
+        switch (type)
+        {
+            case MYSQL_TYPE_BLOB:
+            case MYSQL_TYPE_DOUBLE:
+            case MYSQL_TYPE_FLOAT:
+                return 1;
+            case MYSQL_TYPE_STRING:
+            case MYSQL_TYPE_VAR_STRING:
+            case MYSQL_TYPE_VARCHAR:
+            case MYSQL_TYPE_DECIMAL:
+            case MYSQL_TYPE_NEWDECIMAL:
+            case MYSQL_TYPE_ENUM:
+            case MYSQL_TYPE_SET:
+                return 2;
+            case MYSQL_TYPE_BIT:
+            case MYSQL_TYPE_DATE:
+            case MYSQL_TYPE_DATETIME:
+            case MYSQL_TYPE_TIMESTAMP:
+            case MYSQL_TYPE_TINY:
+            case MYSQL_TYPE_SHORT:
+            case MYSQL_TYPE_INT24:
+            case MYSQL_TYPE_LONG:
+            case MYSQL_TYPE_LONGLONG:
+            default:
+                return 0;
+        }
     }
 
     uint64_t m_table_id = 0;
@@ -267,6 +328,8 @@ struct MYSQL_TABLE_MAP_EVENT
     std::string m_table_name;
     MYSQL_INT_LENENC m_column_count;
     std::string m_column_type;
+    std::vector<uint32_t> m_meta_vect;
+    std::string m_nullbitmask;
 };
 
 struct MYSQL_WRITE_ROW_EVENT
@@ -435,8 +498,13 @@ public:
                 }
                 case TABLE_MAP_EVENT:
                 {
-                    tme.Init(event_body, fde);
+                    tme.Init(event_body, fde, &rpl.buffer[rpl.size - 1]);
                     m_parse_row = tme.m_schema_name == m_schema && tme.m_table_name == m_table;
+                    if (m_parse_row)
+                    {
+                        HexStr(rpl.buffer + 1 + 19, rpl.size - 1 - 19);
+                        tme.Init(event_body, fde, &rpl.buffer[rpl.size - 1]);
+                    }
                     break;
                 }
                 case WRITE_ROWS_EVENT:
@@ -444,7 +512,7 @@ public:
                 {
                     if (m_parse_row)
                     {
-                        HexStr(rpl.buffer + 1 + 19, rpl.size - 1 - 19);
+//                        HexStr(rpl.buffer + 1 + 19, rpl.size - 1 - 19);
                         MYSQL_WRITE_ROW_EVENT event;
                         event.Init(event_body, fde, tme);
                         std::cout <<  GetName(type) << std::endl;
@@ -466,7 +534,7 @@ private:
 int main()
 {
     BinlogReader reader;
-    reader.SetTargetTable("cdc", "test2");
+    reader.SetTargetTable("cdc", "test3");
     reader.Run("0.0.0.0", "root", "123456");
     return 0;
 }
