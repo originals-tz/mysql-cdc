@@ -77,7 +77,7 @@ public:
 
     void ReadString(std::string& str, uint32_t size)
     {
-        str.assign((char*)m_ptr, size);
+        str.assign((char*)m_ptr);
         m_ptr += size;
     }
 

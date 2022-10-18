@@ -22,6 +22,10 @@ public:
 
     uint8_t GetHeaderLen(EventType type)
     {
+        if (type == UNKNOWN_EVENT)
+        {
+            return 0;
+        }
         return m_event_type_header_len[int(type) - 1];
     }
 private:
