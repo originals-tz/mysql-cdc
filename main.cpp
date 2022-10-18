@@ -4,8 +4,9 @@
 #include <cstring>
 #include <iostream>
 #include <vector>
+#include "binlog/client.h"
 
-enum Log_event_type {
+enum EventType {
 
     UNKNOWN_EVENT = 0,
     START_EVENT_V3 = 1,
@@ -57,10 +58,9 @@ enum Log_event_type {
     TRANSACTION_PAYLOAD_EVENT = 40,
     HEARTBEAT_LOG_EVENT_V2 = 41,
     ENUM_END_EVENT /* end marker */
-
 };
 
-std::string GetName(Log_event_type type)
+std::string GetName(EventType type)
 {
 #define Case(x) \
     case x:     \
@@ -106,6 +106,19 @@ std::string GetName(Log_event_type type)
             return "";
     };
 }
+
+
+struct ByteArrayStream
+{
+    ByteArrayStream(void* ptr, uint64_t len)
+        : m_stream((uint8_t*)ptr)
+        , m_len(len)
+    {
+    }
+
+    uint8_t* m_stream;
+    uint64_t m_len;
+};
 
 void HexStr(const unsigned char* byte_arr, int arr_len, int offset = 0)
 {
@@ -154,23 +167,26 @@ struct MYSQL_INT_LENENC
             m_value = uint64_t(*ptr);
             m_len = 1;
         }
-        else if (*ptr >= 0xfb)
+        else if (*ptr == 0xfb)
+        {
+            assert(false);
+        }
+        else if (*ptr == 0xfc)
         {
             ReadData(m_value, ptr + 1, 2);
             m_len = 3;
         }
-        else if (*ptr >= 0xfc)
+        else if (*ptr == 0xfd)
         {
             ReadData(m_value, ptr + 1, 3);
             m_len = 4;
         }
-        else if (*ptr >= 0xfe)
+        else if (*ptr == 0xfe)
         {
             ReadData(m_value, ptr + 1, 8);
             m_len = 9;
         }
     }
-
     uint64_t m_value = 0;
     uint16_t m_len = 0;
 };
@@ -312,17 +328,19 @@ struct MYSQL_TABLE_MAP_EVENT : EventBase
                     int16_t meta_data = 0;
                     Read(meta_data);
                     len = meta_data;
+                    if (m_is_output)
+                        std::cout << len << std::endl;
                 }
                 m_meta_vect.emplace_back(len);
             }
         }
         uint32_t null_bitmask_len = (m_column_count.m_value + 8) / 7;
         Read(m_nullbitmask, null_bitmask_len);
+        if (m_is_output)
+            std::cout << "to_end : " << end - m_ptr - 4 << std::endl;
         Read(m_opt_meta_len);
         m_ptr += m_opt_meta_len.m_len;
         m_ptr += m_opt_meta_len.m_value;
-        if (m_is_output)
-            std::cout << "to_end" << end - m_ptr << std::endl;
     }
 
     uint32_t MetaDataLen(uint32_t type)
@@ -489,31 +507,31 @@ public:
     void FetchBinlog(MYSQL* con, MYSQL_RPL& rpl)
     {
         if (mysql_binlog_open(con, &rpl))
-        {
-            fprintf(stderr, "mysql_binlog_open() failed\n");
-            fprintf(stderr, "Error %u: %s\n", mysql_errno(con), mysql_error(con));
-            return;
-        }
-
-        MYSQL_FORMAT_DESCRIPTION_EVENT fde;
-        MYSQL_TABLE_MAP_EVENT tme;
-        while (true)
-        {
-            if (mysql_binlog_fetch(con, &rpl))
             {
-                fprintf(stderr, "mysql_binlog_fetch() failed\n");
+                fprintf(stderr, "mysql_binlog_open() failed\n");
                 fprintf(stderr, "Error %u: %s\n", mysql_errno(con), mysql_error(con));
                 return;
             }
-            if (rpl.size == 0)
+
+            MYSQL_FORMAT_DESCRIPTION_EVENT fde;
+            MYSQL_TABLE_MAP_EVENT tme;
+            while (true)
             {
-                fprintf(stderr, "EOF event received\n");
-                return;
-            }
+                if (mysql_binlog_fetch(con, &rpl))
+                {
+                    fprintf(stderr, "mysql_binlog_fetch() failed\n");
+                    fprintf(stderr, "Error %u: %s\n", mysql_errno(con), mysql_error(con));
+                    return;
+                }
+                if (rpl.size == 0)
+                {
+                    fprintf(stderr, "EOF event received\n");
+                    return;
+                }
 
             // (Log_event_type)net->read_pos[1 + EVENT_TYPE_OFFSET] : https://github.com/mysql/mysql-server/blob/8.0/sql-common/client.cc#L7267
             // rpl.buffer[0] is packet header, https://dev.mysql.com/doc/dev/mysql-server/latest/page_protocol_basic_ok_packet.html
-            auto type = (Log_event_type)rpl.buffer[1 + 4];
+            auto type = (EventType)rpl.buffer[1 + 4];
             auto* event_content = (const unsigned char*)(rpl.buffer + 1);
 
             // https://dev.mysql.com/doc/internals/en/binlog-event-header.html
@@ -535,13 +553,13 @@ public:
                 }
                 case TABLE_MAP_EVENT:
                 {
-                    tme.Init(event_body, fde, &rpl.buffer[rpl.size - 1]);
+                    tme.Init(event_body, fde, &rpl.buffer[rpl.size]);
                     m_parse_row = tme.m_schema_name == m_schema && tme.m_table_name == m_table;
                     if (m_parse_row)
                     {
                         HexStr(rpl.buffer + 1, rpl.size - 1);
                         tme.SetOutput(true);
-                        tme.Init(event_body, fde, &rpl.buffer[rpl.size - 1]);
+                        tme.Init(event_body, fde, &rpl.buffer[rpl.size]);
                         tme.SetOutput(false);
                     }
                     break;
@@ -572,8 +590,13 @@ private:
 
 int main()
 {
-    BinlogReader reader;
-    reader.SetTargetTable("cdc", "test");
-    reader.Run("0.0.0.0", "root", "123456");
+//    BinlogReader reader;
+//    reader.SetTargetTable("cdc", "test");
+//    reader.Run("0.0.0.0", "root", "123456");
+
+    binlog::Client client;
+    auto deserializer = std::make_shared<binlog::Deserializer>();
+    client.SetDeserializer(deserializer);
+    client.Run("0.0.0.0", "root", "123456");
     return 0;
 }

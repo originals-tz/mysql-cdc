@@ -1,0 +1,57 @@
+#ifndef MYSQL_CDC_EVENT_H
+#define MYSQL_CDC_EVENT_H
+
+namespace binlog
+{
+enum EventType
+{
+    UNKNOWN_EVENT = 0,
+    START_EVENT_V3 = 1,
+    QUERY_EVENT = 2,
+    STOP_EVENT = 3,
+    ROTATE_EVENT = 4,
+    INTVAR_EVENT = 5,
+    SLAVE_EVENT = 7,
+    APPEND_BLOCK_EVENT = 9,
+    DELETE_FILE_EVENT = 11,
+    RAND_EVENT = 13,
+    USER_VAR_EVENT = 14,
+    FORMAT_DESCRIPTION_EVENT = 15,
+    XID_EVENT = 16,
+    BEGIN_LOAD_QUERY_EVENT = 17,
+    EXECUTE_LOAD_QUERY_EVENT = 18,
+    TABLE_MAP_EVENT = 19,
+    /** The V1 event numbers are used from 5.1.16 until mysql-5.6. **/
+    WRITE_ROWS_EVENT_V1 = 23,
+
+    UPDATE_ROWS_EVENT_V1 = 24,
+
+    DELETE_ROWS_EVENT_V1 = 25,
+
+    INCIDENT_EVENT = 26,
+    HEARTBEAT_LOG_EVENT = 27,
+    IGNORABLE_LOG_EVENT = 28,
+    ROWS_QUERY_LOG_EVENT = 29,
+    /** Version 2 of the Row events */
+    WRITE_ROWS_EVENT = 30,
+    UPDATE_ROWS_EVENT = 31,
+    DELETE_ROWS_EVENT = 32,
+
+    GTID_LOG_EVENT = 33,
+    ANONYMOUS_GTID_LOG_EVENT = 34,
+    PREVIOUS_GTIDS_LOG_EVENT = 35,
+    TRANSACTION_CONTEXT_EVENT = 36,
+
+    VIEW_CHANGE_EVENT = 37,
+    /** Prepared XA transaction terminal event similar to Xid **/
+    XA_PREPARE_LOG_EVENT = 38,
+    PARTIAL_UPDATE_ROWS_EVENT = 39,
+    TRANSACTION_PAYLOAD_EVENT = 40,
+    HEARTBEAT_LOG_EVENT_V2 = 41,
+    /** end marker **/
+    ENUM_END_EVENT
+};
+
+}
+
+#endif  // MYSQL_CDC_EVENT_H
