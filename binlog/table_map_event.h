@@ -30,11 +30,6 @@ public:
         buffer.ReadString(m_table_name, len);
         buffer.Skip(1);
 
-        if (m_table_name == "test")
-        {
-            int i = 0;
-            buffer.HexStr();
-        }
         m_number_of_column = buffer.ReadPackedInteger();
         m_column_type.resize(m_number_of_column);
         buffer.ReadBitSet(&m_column_type.front(), m_number_of_column);
@@ -80,6 +75,32 @@ public:
             }
         }
     }
+
+    uint64_t GetTableId() const
+    {
+        return m_table_id;
+    }
+
+    const std::string& GetDataBase()
+    {
+        return m_schema_name;
+    }
+
+    const std::string& GetTable()
+    {
+        return m_table_name;
+    }
+
+    uint64_t GetNumberOfColumn() const
+    {
+        return m_number_of_column;
+    }
+
+    uint32_t GetMetaData(size_t column) const
+    {
+        return m_column_metadata_vect[column];
+    }
+
 private:
     uint64_t m_table_id = 0;
     std::string m_schema_name;

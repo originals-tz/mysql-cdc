@@ -85,6 +85,7 @@ public:
 
     void ReadBitSet(uint8_t* buffer, uint32_t size)
     {
+        size = (size + 7) >> 3;
         memcpy(buffer, m_ptr, size);
         m_ptr += size;
     }
@@ -162,9 +163,9 @@ public:
     }
 
 private:
-    const unsigned char* m_buffer;
-    unsigned long m_size;
-    const unsigned char* m_ptr;
+    unsigned long m_size = 0;
+    const unsigned char* m_buffer = nullptr;
+    const unsigned char* m_ptr = nullptr;
 };
 }
 #endif  // MYSQL_CDC_BYTE_BUFFER_H
