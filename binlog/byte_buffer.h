@@ -1,5 +1,6 @@
 #ifndef MYSQL_CDC_BYTE_BUFFER_H
 #define MYSQL_CDC_BYTE_BUFFER_H
+#include <cassert>
 #include <cstdint>
 #include <cstring>
 #include <iostream>
@@ -15,11 +16,6 @@ public:
         m_buffer = buffer;
         m_size = size;
         m_ptr = buffer;
-    }
-
-    unsigned char Peek(size_t size)
-    {
-        return *(m_ptr + size);
     }
 
     void Skip(uint32_t size)
@@ -93,10 +89,43 @@ public:
         m_ptr += size;
     }
 
-
     uint32_t Available()
     {
         return m_size - (m_ptr - m_buffer);
+    }
+
+    void Read(void* ptr, uint32_t size)
+    {
+        memcpy(ptr, m_ptr, size);
+        m_ptr += size;
+    }
+
+    uint64_t ReadPackedInteger()
+    {
+        uint64_t res = 0;
+        uint8_t flag = 0;
+        ReadUint8(flag);
+        if (flag < 0xfb)
+        {
+            res = flag;
+        }
+        else if (flag == 0xfb)
+        {
+            assert(false);
+        }
+        else if (flag == 0xfc)
+        {
+            Read(&res, 2);
+        }
+        else if (flag == 0xfd)
+        {
+            Read(&res, 3);
+        }
+        else if (flag == 0xfe)
+        {
+            Read(&res, 8);
+        }
+        return res;
     }
 
     void HexStr()
