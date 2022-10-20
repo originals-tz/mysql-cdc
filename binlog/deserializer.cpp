@@ -27,8 +27,12 @@ void Deserializer::Deserialize(const unsigned char* buffer, unsigned long size)
         }
         case WRITE_ROWS_EVENT:
         {
-            WriteRowEvent event;
-            event.Deserialize(m_buffer, m_format_description_event);
+            if (m_table_map_event.GetTable() == "test")
+            {
+                WriteRowEvent event;
+                event.Deserialize(m_buffer, m_format_description_event, m_table_map_event);
+                event.PrintValues();
+            }
         }
         default:
             break;

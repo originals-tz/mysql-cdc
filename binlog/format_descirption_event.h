@@ -17,7 +17,7 @@ public:
         buffer.ReadString(m_mysql_version, 50);
         buffer.ReadUint32(m_create_time);
         buffer.ReadUint8(m_event_header_len);
-        buffer.ReadBitSet(m_event_type_header_len, ENUM_END_EVENT);
+        buffer.Read(m_event_type_header_len, ENUM_END_EVENT);
     }
 
     uint8_t GetHeaderLen(EventType type)

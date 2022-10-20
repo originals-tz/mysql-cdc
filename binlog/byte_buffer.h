@@ -5,6 +5,7 @@
 #include <cstring>
 #include <iostream>
 #include <string>
+#include <vector>
 
 namespace binlog
 {
@@ -16,6 +17,11 @@ public:
         m_buffer = buffer;
         m_size = size;
         m_ptr = buffer;
+
+        for (int i = 0; i < size; i++)
+        {
+            data_vect.emplace_back((uint8_t)m_buffer[i]);
+        }
     }
 
     void Skip(uint32_t size)
@@ -73,7 +79,7 @@ public:
 
     void ReadString(std::string& str, uint32_t size)
     {
-        str.assign((char*)m_ptr);
+        str.assign((char*)m_ptr, size);
         m_ptr += size;
     }
 
@@ -83,11 +89,27 @@ public:
         m_ptr += str.size() + 1;
     }
 
-    void ReadBitSet(uint8_t* buffer, uint32_t size)
+    void Read(uint8_t* buffer, uint32_t size)
     {
-        size = (size + 7) >> 3;
         memcpy(buffer, m_ptr, size);
         m_ptr += size;
+    }
+
+    void ReadBitSet(std::vector<uint8_t>& buffer, uint32_t size)
+    {
+        std::vector<uint8_t> tmp;
+        uint32_t length = (size + 7) >> 3;
+        tmp.resize(length);
+        memcpy(&tmp.front(), m_ptr, length);
+        m_ptr += length;
+
+        buffer.resize(size, 0);
+        for (int i = 0; i < size; i++)
+        {
+            if (tmp[i >> 3] & (1 << (i % 8))) {
+                buffer[i] = 1;
+            }
+        }
     }
 
     uint32_t Available()
@@ -163,6 +185,7 @@ public:
     }
 
 private:
+    std::vector<uint8_t> data_vect;
     unsigned long m_size = 0;
     const unsigned char* m_buffer = nullptr;
     const unsigned char* m_ptr = nullptr;

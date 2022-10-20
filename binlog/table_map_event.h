@@ -32,11 +32,11 @@ public:
 
         m_number_of_column = buffer.ReadPackedInteger();
         m_column_type.resize(m_number_of_column);
-        buffer.ReadBitSet(&m_column_type.front(), m_number_of_column);
+        buffer.Read(&m_column_type.front(), m_number_of_column);
         buffer.ReadPackedInteger(); //metadata length
         ReadMetaData(buffer);
         m_nullability_vect.resize(m_number_of_column);
-        buffer.ReadBitSet(&m_nullability_vect.front(), m_number_of_column);
+        buffer.Read(&m_nullability_vect.front(), m_number_of_column);
     }
 
     void ReadMetaData(ByteBuffer& buffer)
@@ -91,9 +91,9 @@ public:
         return m_table_name;
     }
 
-    uint64_t GetNumberOfColumn() const
+    std::vector<uint8_t> GetColumnType()
     {
-        return m_number_of_column;
+        return m_column_type;
     }
 
     uint32_t GetMetaData(size_t column) const
@@ -107,7 +107,7 @@ private:
     std::string m_table_name;
     uint64_t m_number_of_column = 0;
     std::vector<uint8_t> m_column_type;
-    std::vector<uint32_t> m_column_metadata_vect;
+    std::vector<uint16_t> m_column_metadata_vect;
     std::vector<uint8_t> m_nullability_vect;
 };
 }
