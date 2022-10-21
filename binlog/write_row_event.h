@@ -55,30 +55,135 @@ private:
 
             if (!m_nullcolumns[i - skip])
             {
+                uint16_t meta = 0;
+                uint32_t length = 0;
                 if (column_type[i] == MYSQL_TYPE_STRING)
                 {
-                    uint16_t meta = table_map_event.GetMetaData(i);
+                    meta = table_map_event.GetMetaData(i);
                     if (meta >= 256)
                     {
-                        uint16_t meta0 = meta & 0xFF;
-                        uint16_t meta1 = meta >> 8;
-                        if (meta1 < 256)
-                        {
-                            uint8_t strlen = 0;
-                            buffer.ReadUint8(strlen);
-                            std::string value;
-                            buffer.ReadString(value, strlen);
-                            m_value_vect.emplace_back(value);
-                        }
+                        auto meta_data = DeserializeMeta(meta);
+                        uint16_t meta0 = meta_data.first;
+                        uint16_t meta1 = meta_data.second;
+                        length = meta1;
                     }
                 }
-                else if (column_type[i] == MYSQL_TYPE_LONG)
-                {
-                    int32_t value = 0;
-                    buffer.ReadInt32(value);
-                    m_value_vect.emplace_back(std::to_string(value));
-                }
+                DeserializeColumnValue(column_type[i], meta, length, buffer);
             }
+        }
+    }
+
+    std::pair<uint16_t, uint16_t> DeserializeMeta(uint16_t meta)
+    {
+        return std::make_pair(meta & 0xFF, meta >> 8);
+    }
+
+    template <class T>
+    void StoreValue(T& value)
+    {
+        m_value_vect.template emplace_back(std::to_string(value));
+    }
+
+    void DeserializeBit(uint16_t meta, ByteBuffer& buffer)
+    {
+        auto meta_data = DeserializeMeta(meta);
+        uint16_t len = meta_data.first * 8 + meta_data.second;
+        std::vector<uint8_t> bitset;
+        buffer.ReadBitSet(bitset, len);
+    }
+
+    void DeserializeTiny(ByteBuffer& buffer)
+    {
+        int8_t value = 0;
+        buffer.ReadInt8(value);
+        StoreValue(value);
+    }
+
+    void DeserializeShort(ByteBuffer& buffer)
+    {
+        int16_t value = 0;
+        buffer.ReadInt16(value);
+        StoreValue(value);
+    }
+
+    void DeserializeInt24(ByteBuffer& buffer)
+    {
+        int32_t value = 0;
+        buffer.Read(&value, 3);
+        StoreValue(value);
+    }
+
+    void DeserializeLong(ByteBuffer& buffer)
+    {
+        int32_t value = 0;
+        buffer.ReadInt32(value);
+        StoreValue(value);
+    }
+
+    void DeserializeLongLong(ByteBuffer& buffer)
+    {
+        int64_t value = 0;
+        buffer.ReadInt64(value);
+        StoreValue(value);
+    }
+
+    void DeserializeString(uint32_t length, ByteBuffer& buffer)
+    {
+        if (length < 256)
+        {
+            uint8_t strlen = 0;
+            buffer.ReadUint8(strlen);
+            std::string value;
+            buffer.ReadString(value, strlen);
+            m_value_vect.emplace_back(value);
+        }
+    }
+
+    void DeserializeColumnValue(uint8_t field_type, uint16_t meta, uint32_t length, ByteBuffer& buffer)
+    {
+        switch (field_type)
+        {
+            case MYSQL_TYPE_BIT:
+                DeserializeBit(meta, buffer);
+                break;
+            case MYSQL_TYPE_TINY:
+                DeserializeTiny(buffer);
+                break;
+            case MYSQL_TYPE_SHORT:
+                DeserializeShort(buffer);
+                break;
+            case MYSQL_TYPE_INT24:
+                DeserializeInt24(buffer);
+                break;
+            case MYSQL_TYPE_LONG:
+                DeserializeLong(buffer);
+                break;
+            case MYSQL_TYPE_LONGLONG:
+                DeserializeLongLong(buffer);
+                break;
+            case MYSQL_TYPE_FLOAT:
+            case MYSQL_TYPE_DOUBLE:
+            case MYSQL_TYPE_NEWDECIMAL:
+            case MYSQL_TYPE_DATE:
+            case MYSQL_TYPE_TIME:
+            case MYSQL_TYPE_TIME2:
+            case MYSQL_TYPE_TIMESTAMP:
+            case MYSQL_TYPE_TIMESTAMP2:
+            case MYSQL_TYPE_DATETIME:
+            case MYSQL_TYPE_DATETIME2:
+            case MYSQL_TYPE_YEAR:
+            case MYSQL_TYPE_STRING: // CHAR or BINARY
+                DeserializeString(length, buffer);
+                break;
+            case MYSQL_TYPE_VARCHAR:
+            case MYSQL_TYPE_VAR_STRING: // VARCHAR or VARBINARY
+            case MYSQL_TYPE_BLOB:
+            case MYSQL_TYPE_ENUM:
+            case MYSQL_TYPE_SET:
+            case MYSQL_TYPE_GEOMETRY:
+            case MYSQL_TYPE_JSON:
+            default:
+                assert(false);
         }
     }
 
