@@ -4,6 +4,7 @@
 #include <algorithm>
 #include "byte_buffer.h"
 #include "table_map_event.h"
+#include "bitset.h"
 
 namespace binlog
 {
@@ -42,18 +43,18 @@ public:
 private:
     void DeserializeRow(ByteBuffer& buffer, TableMapEvent& table_map_event)
     {
-        buffer.ReadBitSet(m_nullcolumns, NumberOfBitSet(m_include_columns));
+        buffer.ReadBitSet(m_nullcolumns, m_include_columns.NumberOfSet());
         buffer.HexStr();
         auto column_type = table_map_event.GetColumnType();
         for (int i = 0, skip = 0; i < column_type.size(); i++)
         {
-            if (!m_include_columns[i])
+            if (!m_include_columns.Get(i))
             {
                 skip++;
                 continue;
             }
 
-            if (!m_nullcolumns[i - skip])
+            if (!m_nullcolumns.Get(i - skip))
             {
                 uint16_t meta = 0;
                 uint32_t length = 0;
@@ -88,7 +89,7 @@ private:
     {
         auto meta_data = DeserializeMeta(meta);
         uint16_t len = meta_data.first * 8 + meta_data.second;
-        std::vector<uint8_t> bitset;
+        BitSet bitset;
         buffer.ReadBitSet(bitset, len);
     }
 
@@ -187,24 +188,11 @@ private:
         }
     }
 
-    uint8_t NumberOfBitSet(const std::vector<uint8_t>& bit_set)
-    {
-        uint8_t res = 0;
-        for (auto& data : bit_set)
-        {
-            if (data)
-            {
-                res++;
-            }
-        }
-        return res;
-    }
-
     std::vector<std::string> m_value_vect;
     uint64_t m_table_id = 0;
     uint64_t m_number_of_column = 0;
-    std::vector<uint8_t> m_include_columns;
-    std::vector<uint8_t> m_nullcolumns;
+    BitSet m_include_columns;
+    BitSet m_nullcolumns;
 };
 }  // namespace binlog
 

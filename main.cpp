@@ -1,4 +1,6 @@
 #include "binlog/client.h"
+
+
 int main()
 {
     binlog::Client client;

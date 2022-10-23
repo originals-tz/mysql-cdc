@@ -1,11 +1,13 @@
 #ifndef MYSQL_CDC_BYTE_BUFFER_H
 #define MYSQL_CDC_BYTE_BUFFER_H
+#include <bitset>
 #include <cassert>
 #include <cstdint>
 #include <cstring>
 #include <iostream>
 #include <string>
 #include <vector>
+#include "bitset.h"
 
 namespace binlog
 {
@@ -95,7 +97,7 @@ public:
         m_ptr += size;
     }
 
-    void ReadBitSet(std::vector<uint8_t>& buffer, uint32_t size)
+    void ReadBitSet(BitSet& buffer, uint32_t size)
     {
         std::vector<uint8_t> tmp;
         uint32_t length = (size + 7) >> 3;
@@ -103,11 +105,11 @@ public:
         memcpy(&tmp.front(), m_ptr, length);
         m_ptr += length;
 
-        buffer.resize(size, 0);
+        buffer.Init(size);
         for (int i = 0; i < size; i++)
         {
             if (tmp[i >> 3] & (1 << (i % 8))) {
-                buffer[i] = 1;
+                buffer.Set(i);
             }
         }
     }
