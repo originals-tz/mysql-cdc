@@ -128,6 +128,20 @@ private:
         StoreValue(value);
     }
 
+    void DeserializeFloat(ByteBuffer& buffer)
+    {
+        float value = 0.0f;
+        buffer.Read(&value, 4);
+        StoreValue(value);
+    }
+
+    void DeserializeDouble(ByteBuffer& buffer)
+    {
+        double value = 0;
+        buffer.Read(&value, 8);
+        StoreValue(value);
+    }
+
     void DeserializeString(uint32_t length, ByteBuffer& buffer)
     {
         if (length < 256)
@@ -163,7 +177,11 @@ private:
                 DeserializeLongLong(buffer);
                 break;
             case MYSQL_TYPE_FLOAT:
+                DeserializeFloat(buffer);
+                break;
             case MYSQL_TYPE_DOUBLE:
+                DeserializeDouble(buffer);
+                break;
             case MYSQL_TYPE_NEWDECIMAL:
             case MYSQL_TYPE_DATE:
             case MYSQL_TYPE_TIME:
