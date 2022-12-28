@@ -110,7 +110,7 @@ public:
         return m_column_type;
     }
 
-    uint32_t GetMetaData(size_t column) const
+    int GetMetaData(size_t column) const
     {
         return m_column_metadata_vect[column];
     }
@@ -121,7 +121,7 @@ private:
     std::string m_table_name;
     uint64_t m_column_count = 0;
     std::vector<uint8_t> m_column_type;
-    std::vector<uint> m_column_metadata_vect;
+    std::vector<int> m_column_metadata_vect;
     std::vector<uint8_t> m_nullability_vect;
 };
 }

@@ -44,6 +44,13 @@ public:
         m_ptr += 1;
     }
 
+    int ReadInt8()
+    {
+        int value = *(int8_t*)(m_ptr);
+        m_ptr += 1;
+        return value;
+    }
+
     void ReadInt8(int8_t& value)
     {
         value = *(int8_t*)(m_ptr);

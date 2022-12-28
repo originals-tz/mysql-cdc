@@ -2,9 +2,10 @@
 #define MYSQL_CDC_WRITE_ROW_EVENT_H
 
 #include <algorithm>
+#include <sstream>
+#include "bitset.h"
 #include "byte_buffer.h"
 #include "table_map_event.h"
-#include "bitset.h"
 
 namespace binlog
 {
@@ -56,27 +57,27 @@ private:
 
             if (!m_nullcolumns.Get(i - skip))
             {
-                uint meta = 0;
-                uint length = 0;
+                int meta = 0;
+                int length = 0;
+                uint8_t type = column_type[i];
+                meta = table_map_event.GetMetaData(i);
                 if (column_type[i] == MYSQL_TYPE_STRING)
                 {
-                    meta = table_map_event.GetMetaData(i);
                     if (meta >= 256)
                     {
-                        uint byte0= meta >> 8;
-                        uint byte1= meta & 0xFF;
-
+                        int byte0= meta >> 8;
+                        int byte1= meta & 0xFF;
                         if ((byte0 & 0x30) != 0x30)
                         {
                             /* a long CHAR() field: see #37426 */
                             length= byte1 | (((byte0 & 0x30) ^ 0x30) << 4);
-                            uint type = byte0 | 0x30;
+                            type = byte0 | 0x30;
                         }
                         else
                             length = meta & 0xFF;
                     }
                 }
-                DeserializeColumnValue(column_type[i], meta, length, buffer);
+                DeserializeColumnValue(type, meta, length, buffer);
             }
         }
     }
@@ -87,12 +88,11 @@ private:
         m_value_vect.template emplace_back(std::to_string(value));
     }
 
-    void DeserializeBit(uint16_t meta, ByteBuffer& buffer)
+    void DeserializeBit(int meta, ByteBuffer& buffer)
     {
-//        auto meta_data = DeserializeMeta(meta);
-//        uint16_t len = meta_data.first * 8 + meta_data.second;
-//        BitSet bitset;
-//        buffer.ReadBitSet(bitset, len);
+        uint16_t len = (meta >> 8) * 8 + (meta & 0xFF);
+        BitSet bitset;
+        buffer.ReadBitSet(bitset, len);
     }
 
     void DeserializeTiny(ByteBuffer& buffer)
@@ -146,7 +146,37 @@ private:
 
     void DeserializeNewDecimal(uint16_t meta, ByteBuffer& buffer)
     {
+    }
 
+    void DeserializeDate(ByteBuffer& buffer)
+    {
+        uint32_t value = 0;
+        buffer.Read(&value, 3);
+        uint day = value % 32;
+        value >>=5;
+        uint month = value % 16;
+        uint year = value >> 4;
+        std::stringstream ss;
+        ss << year << "-" << month << "-" << day << std::endl;
+        m_value_vect.emplace_back(ss.str());
+    }
+
+    void DeserializeTime(ByteBuffer& buffer)
+    {
+        uint32_t value = 0;
+        buffer.Read(&value, 3);
+    }
+
+    void DeserializeTimeV2(ByteBuffer& buffer)
+    {
+        uint32_t value = 0;
+        buffer.Read(&value, 3);
+    }
+
+    void DeserializeYear(ByteBuffer& buffer)
+    {
+        uint year = buffer.ReadUint8() + 1900;
+        StoreValue(year);
     }
 
     void DeserializeString(uint32_t length, ByteBuffer& buffer)
@@ -157,7 +187,31 @@ private:
         m_value_vect.emplace_back(value);
     }
 
-    void DeserializeColumnValue(uint8_t field_type, uint16_t meta, uint32_t length, ByteBuffer& buffer)
+    void DeserializeVarString(int meta, ByteBuffer& buffer)
+    {
+        uint varcharLength = meta < 256 ? buffer.ReadUint8() : buffer.ReadUint16();
+        std::string value;
+        buffer.ReadString(value, varcharLength);
+        m_value_vect.emplace_back(value);
+    }
+
+    void DeserializeBlob(int meta, ByteBuffer& buffer)
+    {
+        uint64_t len = 0;
+        buffer.Read(&len, meta);
+        std::string str;
+        buffer.ReadString(str, len);
+        m_value_vect.emplace_back(str);
+    }
+
+    void DeserializeEnum(uint32_t length, ByteBuffer& buffer)
+    {
+        uint64_t value = 0;
+        buffer.Read(&value, length);
+        StoreValue(value);
+    }
+
+    void DeserializeColumnValue(uint8_t field_type, int meta, int length, ByteBuffer& buffer)
     {
         switch (field_type)
         {
@@ -186,20 +240,34 @@ private:
                 DeserializeDouble(buffer);
                 break;
             case MYSQL_TYPE_NEWDECIMAL:
+//                DeserializeNewDecimal(meta, buffer);
+                break;
             case MYSQL_TYPE_DATE:
+                DeserializeDate(buffer);
+                break;
             case MYSQL_TYPE_TIME:
+                DeserializeTime(buffer);
+                break;
             case MYSQL_TYPE_TIME2:
+                DeserializeTimeV2(buffer);
+                break;
             case MYSQL_TYPE_TIMESTAMP:
             case MYSQL_TYPE_TIMESTAMP2:
             case MYSQL_TYPE_DATETIME:
             case MYSQL_TYPE_DATETIME2:
             case MYSQL_TYPE_YEAR:
+                DeserializeYear(buffer);
+                break;
             case MYSQL_TYPE_STRING: // CHAR or BINARY
                 DeserializeString(length, buffer);
                 break;
             case MYSQL_TYPE_VARCHAR:
-            case MYSQL_TYPE_VAR_STRING: // VARCHAR or VARBINARY
+            case MYSQL_TYPE_VAR_STRING:
+                DeserializeVarString(meta, buffer);
+                break;
             case MYSQL_TYPE_BLOB:
+                DeserializeBlob(meta, buffer);
+                break;
             case MYSQL_TYPE_ENUM:
             case MYSQL_TYPE_SET:
             case MYSQL_TYPE_GEOMETRY:
@@ -214,6 +282,8 @@ private:
     uint64_t m_number_of_column = 0;
     BitSet m_include_columns;
     BitSet m_nullcolumns;
+    static const int DIG_PER_DEC = 9;
+    constexpr static const int DIG_TO_BYTES[] = {0,1,1,2,2,3,3,4,4,4};
 };
 }  // namespace binlog
 
