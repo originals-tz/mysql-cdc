@@ -56,27 +56,29 @@ private:
 
             if (!m_nullcolumns.Get(i - skip))
             {
-                uint16_t meta = 0;
-                uint32_t length = 0;
+                uint meta = 0;
+                uint length = 0;
                 if (column_type[i] == MYSQL_TYPE_STRING)
                 {
                     meta = table_map_event.GetMetaData(i);
                     if (meta >= 256)
                     {
-                        auto meta_data = DeserializeMeta(meta);
-                        uint16_t meta0 = meta_data.first;
-                        uint16_t meta1 = meta_data.second;
-                        length = meta1;
+                        uint byte0= meta >> 8;
+                        uint byte1= meta & 0xFF;
+
+                        if ((byte0 & 0x30) != 0x30)
+                        {
+                            /* a long CHAR() field: see #37426 */
+                            length= byte1 | (((byte0 & 0x30) ^ 0x30) << 4);
+                            uint type = byte0 | 0x30;
+                        }
+                        else
+                            length = meta & 0xFF;
                     }
                 }
                 DeserializeColumnValue(column_type[i], meta, length, buffer);
             }
         }
-    }
-
-    std::pair<uint16_t, uint16_t> DeserializeMeta(uint16_t meta)
-    {
-        return std::make_pair(meta & 0xFF, meta >> 8);
     }
 
     template <class T>
@@ -87,10 +89,10 @@ private:
 
     void DeserializeBit(uint16_t meta, ByteBuffer& buffer)
     {
-        auto meta_data = DeserializeMeta(meta);
-        uint16_t len = meta_data.first * 8 + meta_data.second;
-        BitSet bitset;
-        buffer.ReadBitSet(bitset, len);
+//        auto meta_data = DeserializeMeta(meta);
+//        uint16_t len = meta_data.first * 8 + meta_data.second;
+//        BitSet bitset;
+//        buffer.ReadBitSet(bitset, len);
     }
 
     void DeserializeTiny(ByteBuffer& buffer)
@@ -142,16 +144,17 @@ private:
         StoreValue(value);
     }
 
+    void DeserializeNewDecimal(uint16_t meta, ByteBuffer& buffer)
+    {
+
+    }
+
     void DeserializeString(uint32_t length, ByteBuffer& buffer)
     {
-        if (length < 256)
-        {
-            uint8_t strlen = 0;
-            buffer.ReadUint8(strlen);
-            std::string value;
-            buffer.ReadString(value, strlen);
-            m_value_vect.emplace_back(value);
-        }
+        uint string_length = length < 256 ? buffer.ReadUint8() : buffer.ReadUint16();
+        std::string value;
+        buffer.ReadString(value, string_length);
+        m_value_vect.emplace_back(value);
     }
 
     void DeserializeColumnValue(uint8_t field_type, uint16_t meta, uint32_t length, ByteBuffer& buffer)

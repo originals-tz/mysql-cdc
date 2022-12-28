@@ -11,11 +11,13 @@ class Deserializer
 {
 public:
     void Deserialize(const unsigned char* buffer, unsigned long size);
+    void SetTable(const std::string& table);
     void Attach();
 private:
     ByteBuffer m_buffer;
     FormatDescriptionEvent m_format_description_event;
     TableMapEvent m_table_map_event;
+    std::string m_table;
 };
 }
 #endif  // MYSQL_CDC_BINLOG_DESERIALIZER_H

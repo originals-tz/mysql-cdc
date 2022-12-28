@@ -7,6 +7,7 @@
 
 namespace binlog
 {
+// https://dev.mysql.com/doc/dev/mysql-server/8.0.31/classbinary__log_1_1Table__map__event.html
 class TableMapEvent
 {
 public:
@@ -23,25 +24,37 @@ public:
         }
         buffer.Skip(2);
         buffer.ReadUint8(len);
-        buffer.ReadString(m_schema_name, len);
+        buffer.ReadString(m_database_name, len);
         buffer.Skip(1);
 
         buffer.ReadUint8(len);
         buffer.ReadString(m_table_name, len);
         buffer.Skip(1);
 
-        m_number_of_column = buffer.ReadPackedInteger();
-        m_column_type.resize(m_number_of_column);
-        buffer.Read(&m_column_type.front(), m_number_of_column);
+        m_column_count = buffer.ReadPackedInteger();
+        m_column_type.resize(m_column_count);
+        buffer.Read(&m_column_type.front(), m_column_count);
         buffer.ReadPackedInteger(); //metadata length
         ReadMetaData(buffer);
-        m_nullability_vect.resize(m_number_of_column);
-        buffer.Read(&m_nullability_vect.front(), m_number_of_column);
+        m_nullability_vect.resize(m_column_count);
+        buffer.Read(&m_nullability_vect.front(), m_column_count);
+    }
+
+    int ToBigEndianInteger(char* ptr, int length)
+    {
+        int result = 0;
+        for (int i = 0; i < length; i++)
+        {
+            char c = *ptr;
+            result = (result << 8) | (c >= 0 ? (int) c : (c+256));
+            ptr++;
+        }
+        return result;
     }
 
     void ReadMetaData(ByteBuffer& buffer)
     {
-        m_column_metadata_vect.resize(m_number_of_column);
+        m_column_metadata_vect.resize(m_column_count);
         for (size_t i = 0; i < m_column_type.size(); i++)
         {
             switch (m_column_type[i])
@@ -59,6 +72,7 @@ public:
                 case MYSQL_TYPE_ENUM:
                 case MYSQL_TYPE_SET:
                     buffer.Read(&m_column_metadata_vect[i], 2);
+                    m_column_metadata_vect[i] = ToBigEndianInteger((char*)(&m_column_metadata_vect[i]), 2);
                     break;
                 case MYSQL_TYPE_BIT:
                 case MYSQL_TYPE_DATE:
@@ -83,7 +97,7 @@ public:
 
     const std::string& GetDataBase()
     {
-        return m_schema_name;
+        return m_database_name;
     }
 
     const std::string& GetTable()
@@ -103,11 +117,11 @@ public:
 
 private:
     uint64_t m_table_id = 0;
-    std::string m_schema_name;
+    std::string m_database_name;
     std::string m_table_name;
-    uint64_t m_number_of_column = 0;
+    uint64_t m_column_count = 0;
     std::vector<uint8_t> m_column_type;
-    std::vector<uint16_t> m_column_metadata_vect;
+    std::vector<uint> m_column_metadata_vect;
     std::vector<uint8_t> m_nullability_vect;
 };
 }

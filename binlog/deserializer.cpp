@@ -27,7 +27,7 @@ void Deserializer::Deserialize(const unsigned char* buffer, unsigned long size)
         }
         case WRITE_ROWS_EVENT:
         {
-            if (m_table_map_event.GetTable() == "test")
+            if (m_table_map_event.GetTable() == m_table)
             {
                 WriteRowEvent event;
                 event.Deserialize(m_buffer, m_format_description_event, m_table_map_event);
@@ -37,6 +37,11 @@ void Deserializer::Deserialize(const unsigned char* buffer, unsigned long size)
         default:
             break;
     }
+}
+
+void Deserializer::SetTable(const std::string& table)
+{
+    m_table = table;
 }
 
 void Deserializer::Attach()

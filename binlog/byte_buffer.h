@@ -31,6 +31,13 @@ public:
         m_ptr += size;
     }
 
+    uint ReadUint8()
+    {
+        uint value = *(uint8_t*)(m_ptr);
+        m_ptr += 1;
+        return value;
+    }
+
     void ReadUint8(uint8_t& value)
     {
         value = *(uint8_t*)(m_ptr);
@@ -41,6 +48,13 @@ public:
     {
         value = *(int8_t*)(m_ptr);
         m_ptr += 1;
+    }
+
+    uint ReadUint16()
+    {
+        uint value = *(uint16_t*)(m_ptr);
+        m_ptr += 2;
+        return value;
     }
 
     void ReadUint16(uint16_t& value)
