@@ -6,6 +6,7 @@
 #include <valarray>
 #include "byte_buffer.h"
 #include "table_map_event.h"
+#include "util.h"
 
 namespace binlog
 {
@@ -88,45 +89,6 @@ private:
         m_value_vect.template emplace_back(std::to_string(value));
     }
 
-    int BitSlice(long value, int bitOffset, int numberOfBits, int payloadSize) {
-        long result = value >> payloadSize - (bitOffset + numberOfBits);
-        return (int) (result & ((1 << numberOfBits) - 1));
-    }
-
-    uint64_t ToBigEndianInteger(char* ptr, int length)
-    {
-        uint64_t result = 0;
-        for (int i = 0; i < length; i++)
-        {
-            char c = *ptr;
-            result = (result << 8) | (c >= 0 ? (int) c : (c+256));
-            ptr++;
-        }
-        return result;
-    }
-
-    uint32_t FractionalSeconds(int meta, ByteBuffer& buffer){
-        int length = (meta + 1) / 2;
-        if (length > 0) {
-            uint32_t value = 0;
-            buffer.Read(&value, length);
-            value = ToBigEndianInteger((char*)&value, length);
-            return value * (int) pow(100, 3 - length);
-        }
-        return 0;
-    }
-
-    std::vector<int> Split(uint64_t value, int divider, int length) {
-        std::vector<int> result;
-        result.resize(length, 0);
-        for (int i = 0; i < length - 1; i++) {
-            result[i] = (int) (value % divider);
-            value /= divider;
-        }
-        result[length - 1] = (int) value;
-        return result;
-    }
-
     void DeserializeBit(int meta, ByteBuffer& buffer)
     {
         uint16_t len = (meta >> 8) * 8 + (meta & 0xFF);
@@ -204,14 +166,7 @@ private:
     {
         uint value = 0;
         buffer.Read(&value, 3);
-        uint date[3] = {0};
-        for (int i = 0; i < 2; i++)
-        {
-            date[i] = value % 100;
-            value /= 100;
-        }
-        date[2] = value;
-
+        auto date = Util::Split(value, 100, 3);
         std::stringstream ss;
         ss << date[0] << ":" << date[1] << ":" << date[2] << std::endl;
         m_value_vect.emplace_back(ss.str());
@@ -221,11 +176,11 @@ private:
     {
         uint32_t value = 0;
         buffer.Read(&value, 3);
-        value = ToBigEndianInteger((char*)&value, 3);
-        uint32_t fsp = FractionalSeconds(meta, buffer);
-        int h = BitSlice(value, 2, 10, 24);
-        int m = BitSlice(value, 12, 6, 24);
-        int s = BitSlice(value, 18, 6, 24);
+        value = Util::ToBigEndianInteger(value, 3);
+        int fsp = Util::FractionalSeconds(meta, buffer);
+        int h = Util::BitSlice(value, 2, 10, 24);
+        int m = Util::BitSlice(value, 12, 6, 24);
+        int s = Util::BitSlice(value, 18, 6, 24);
         fsp = fsp / 1000;
         std::stringstream ss;
         ss << h << ":" << m << ":"  << s << "." << fsp;
@@ -242,9 +197,8 @@ private:
     {
         int64_t second = 0;
         buffer.Read((char*)&second, 4);
-        second = ToBigEndianInteger((char*)&second, 4);
-        int64_t fps = FractionalSeconds(meta, buffer);
-
+        second = Util::ToBigEndianInteger(second, 4);
+        int fps = Util::FractionalSeconds(meta, buffer);
         std::stringstream ss;
         ss << second << "." << fps << std::endl;
         m_value_vect.emplace_back(ss.str());
@@ -253,7 +207,7 @@ private:
     void DeserializeDatetime(ByteBuffer& buffer)
     {
         uint64_t value = buffer.ReadUint64();
-        auto res = Split(value, 100, 6);
+        auto res = Util::Split(value, 100, 6);
         std::stringstream ss;
         for (auto& data : res)
         {
@@ -267,13 +221,13 @@ private:
     {
         uint64_t dt = 0;
         buffer.Read((char*)&dt, 5);
-        dt = ToBigEndianInteger((char*)&dt, 5);
-        int year_month = BitSlice(dt, 1, 17, 40);
-        int fsp = FractionalSeconds(meta, buffer);
-        int d = BitSlice(dt, 18, 5, 40);
-        int h = BitSlice(dt, 23, 5, 40);
-        int m = BitSlice(dt, 28, 6, 40);
-        int s = BitSlice(dt, 34, 6, 40);
+        dt = Util::ToBigEndianInteger(dt, 5);
+        int year_month = Util::BitSlice(dt, 1, 17, 40);
+        int fsp = Util::FractionalSeconds(meta, buffer);
+        int d = Util::BitSlice(dt, 18, 5, 40);
+        int h = Util::BitSlice(dt, 23, 5, 40);
+        int m = Util::BitSlice(dt, 28, 6, 40);
+        int s = Util::BitSlice(dt, 34, 6, 40);
 
         std::stringstream ss;
         ss << year_month / 13 << "-" << year_month % 13 << "-" << d << " " << h << ":" << m << ":" << s << "." << fsp/1000 << std::endl;
@@ -347,7 +301,7 @@ private:
                 DeserializeDouble(buffer);
                 break;
             case MYSQL_TYPE_NEWDECIMAL:
-//                DeserializeNewDecimal(meta, buffer);
+                DeserializeNewDecimal(meta, buffer);
                 break;
             case MYSQL_TYPE_DATE:
                 DeserializeDate(buffer);

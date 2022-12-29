@@ -4,6 +4,7 @@
 #include <mysql/field_types.h>
 #include <vector>
 #include "format_descirption_event.h"
+#include "util.h"
 
 namespace binlog
 {
@@ -40,18 +41,6 @@ public:
         buffer.Read(&m_nullability_vect.front(), m_column_count);
     }
 
-    int ToBigEndianInteger(char* ptr, int length)
-    {
-        int result = 0;
-        for (int i = 0; i < length; i++)
-        {
-            char c = *ptr;
-            result = (result << 8) | (c >= 0 ? (int) c : (c+256));
-            ptr++;
-        }
-        return result;
-    }
-
     void ReadMetaData(ByteBuffer& buffer)
     {
         m_column_metadata_vect.resize(m_column_count);
@@ -72,7 +61,7 @@ public:
                 case MYSQL_TYPE_ENUM:
                 case MYSQL_TYPE_SET:
                     buffer.Read(&m_column_metadata_vect[i], 2);
-                    m_column_metadata_vect[i] = ToBigEndianInteger((char*)(&m_column_metadata_vect[i]), 2);
+                    m_column_metadata_vect[i] = Util::ToBigEndianInteger(m_column_metadata_vect[i], 2);
                     break;
                 case MYSQL_TYPE_BIT:
                 case MYSQL_TYPE_DATE:
