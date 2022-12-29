@@ -5,7 +5,7 @@ int main()
 {
     binlog::Client client;
     auto deserializer = std::make_shared<binlog::Deserializer>();
-    deserializer->SetTable("test_enum");
+    deserializer->SetTable("test_dt");
     client.SetDeserializer(deserializer);
     client.Run("0.0.0.0", "root", "123456");
     return 0;

@@ -76,6 +76,13 @@ public:
         m_ptr += 2;
     }
 
+    uint32_t ReadUint32()
+    {
+        uint32_t value = *(uint32_t*)(m_ptr);
+        m_ptr+=4;
+        return value;
+    }
+
     void ReadUint32(uint32_t& value)
     {
         value = *(uint32_t*)(m_ptr);
@@ -86,6 +93,13 @@ public:
     {
         value = *(int32_t*)(m_ptr);
         m_ptr += 4;
+    }
+
+    uint64_t ReadUint64()
+    {
+        uint64_t value = *(uint64_t*)(m_ptr);
+        m_ptr += 8;
+        return value;
     }
 
     void ReadUint64(uint64_t& value)
